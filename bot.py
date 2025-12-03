@@ -5,15 +5,23 @@ import json
 import uuid
 import random
 import string
+import os
+from datetime import datetime
 
 # إعدادات البوت
 TOKEN = "8436742877:AAHmlmOKY2iQCGoOt004ruq09tZGderDGMQ"
 ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
-BOT_USERNAME = "Flashback70bot"  # تم إضافة يوزر البوت هنا
+BOT_USERNAME = "Flashback70bot"
 
 # قاعدة البيانات
-conn = sqlite3.connect('/tmp/bot.db', check_same_thread=False)
+DB_PATH = 'bot.db'
+
+# إنشاء مجلد للفواتير
+if not os.path.exists('invoices'):
+    os.makedirs('invoices', exist_ok=True)
+
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
 # إنشاء الجداول
@@ -22,7 +30,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS users
              balance REAL DEFAULT 0, is_admin INTEGER DEFAULT 0, 
              is_banned INTEGER DEFAULT 0, is_restricted INTEGER DEFAULT 0,
              invited_by INTEGER DEFAULT 0, invite_code TEXT UNIQUE,
-             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+             total_invites INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS categories 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)''')
@@ -51,7 +59,7 @@ default_settings = [
     ('invite_reward', '0.10'),
     ('invite_enabled', 'true'),
     ('force_subscribe', 'false'),
-    ('bot_username', BOT_USERNAME)  # إضافة إعداد يوزر البوت
+    ('bot_username', BOT_USERNAME)
 ]
 
 for key, value in default_settings:
@@ -60,6 +68,20 @@ for key, value in default_settings:
 # إضافة المدير
 c.execute("INSERT OR IGNORE INTO users (user_id, username, balance, is_admin, invite_code) VALUES (?, ?, ?, ?, ?)",
           (ADMIN_ID, "المدير", 100000, 1, 'ADMIN'))
+
+# إضافة خدمات مثال إذا لم تكن موجودة
+c.execute("SELECT COUNT(*) FROM categories")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO categories (name) VALUES ('خدمات السوشيال ميديا')")
+    c.execute("INSERT INTO categories (name) VALUES ('خدمات اليوتيوب')")
+    conn.commit()
+
+c.execute("SELECT COUNT(*) FROM services")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'متابعين انستغرام', 0.50, 100, 10000)")
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'لايكات تيك توك', 0.30, 100, 5000)")
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (2, 'مشاهدات يوتيوب', 0.20, 500, 50000)")
+    conn.commit()
 
 conn.commit()
 
@@ -79,9 +101,21 @@ def send_msg(chat_id, text, buttons=None):
     except Exception as e:
         print(f"⚠️ خطأ في الإرسال: {e}")
 
+def send_document(chat_id, document_path, caption=""):
+    """إرسال ملف"""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendDocument"
+        with open(document_path, 'rb') as doc:
+            files = {'document': doc}
+            data = {'chat_id': chat_id, 'caption': caption}
+            requests.post(url, files=files, data=data, timeout=20)
+    except Exception as e:
+        print(f"⚠️ خطأ في إرسال الملف: {e}")
+
 def check_channels(user_id):
     c.execute("SELECT value FROM settings WHERE key = 'force_subscribe'")
-    if c.fetchone()[0] != 'true':
+    result = c.fetchone()
+    if not result or result[0] != 'true':
         return True, None
     
     c.execute("SELECT channel_id, channel_username FROM forced_channels")
@@ -104,13 +138,8 @@ def check_channels(user_id):
     
     return True, None
 
-def generate_user_code(length=6):
-    """إنشاء رمز عشوائي للمستخدم"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
-
-# القوائم
+# ========== القوائم الرئيسية ==========
 def main_menu(chat_id, user_id):
-    # التحقق من القنوات
     subscribed, channel = check_channels(user_id)
     if not subscribed:
         buttons = [[
@@ -120,7 +149,6 @@ def main_menu(chat_id, user_id):
         send_msg(chat_id, f"📢 يجب الاشتراك في @{channel} أولاً", buttons)
         return
     
-    # التحقق من الحظر
     c.execute("SELECT is_banned, is_restricted FROM users WHERE user_id = ?", (user_id,))
     user_status = c.fetchone()
     if user_status:
@@ -137,15 +165,15 @@ def main_menu(chat_id, user_id):
     text = f"""👋 أهلاً {user[0] or 'مستخدم'}
 
 🆔 الآيدي: <code>{user_id}</code>
-💰 الرصيد: <b>{user[1]:,.2f} USD</b>
+💰 الرصيد: <b>{user[1]:,.2f} دولار</b>
 
-📌 اختر:"""
+📌 اختر من القائمة:"""
     
     buttons = [
-        [{'text': '🛍️ خدمات', 'callback_data': 'services'}],
-        [{'text': '💰 شحن', 'callback_data': 'charge'}, {'text': '💳 رصيدي', 'callback_data': 'balance'}],
-        [{'text': '👥 دعوة', 'callback_data': 'invite'}, {'text': '📋 طلباتي', 'callback_data': 'my_orders'}],
-        [{'text': '📞 دعم', 'callback_data': 'support'}]
+        [{'text': '🛍️ الخدمات', 'callback_data': 'services'}],
+        [{'text': '💰 شحن الرصيد', 'callback_data': 'charge'}, {'text': '💳 رصيدي', 'callback_data': 'balance'}],
+        [{'text': '👥 دعوة أصدقاء', 'callback_data': 'invite'}, {'text': '📋 طلباتي', 'callback_data': 'my_orders'}],
+        [{'text': '📞 الدعم', 'callback_data': 'support'}]
     ]
     
     if user[2] == 1:
@@ -166,22 +194,22 @@ def services_menu(chat_id):
         buttons.append([{'text': f'📁 {name}', 'callback_data': f'cat_{cat_id}'}])
     
     buttons.append([{'text': '🔙 رجوع', 'callback_data': 'main'}])
-    send_msg(chat_id, "🛍️ اختر قسم:", buttons)
+    send_msg(chat_id, "🛍️ اختر القسم:", buttons)
 
 def category_menu(chat_id, cat_id):
     c.execute("SELECT id, name, price_per_k FROM services WHERE category_id = ?", (cat_id,))
     services = c.fetchall()
     
     if not services:
-        send_msg(chat_id, "📭 لا توجد خدمات")
+        send_msg(chat_id, "📭 لا توجد خدمات في هذا القسم")
         return
     
     buttons = []
     for serv_id, name, price in services:
-        buttons.append([{'text': f'{name} - {price} USD/1000', 'callback_data': f'serv_{serv_id}'}])
+        buttons.append([{'text': f'{name} - {price} دولار/1000', 'callback_data': f'serv_{serv_id}'}])
     
     buttons.append([{'text': '🔙 رجوع', 'callback_data': 'services'}])
-    send_msg(chat_id, "📦 اختر خدمة:", buttons)
+    send_msg(chat_id, "📦 اختر الخدمة:", buttons)
 
 def service_menu(chat_id, user_id, service_id):
     c.execute("SELECT name, price_per_k, min_order, max_order FROM services WHERE id = ?", (service_id,))
@@ -192,54 +220,206 @@ def service_menu(chat_id, user_id, service_id):
         return
     
     name, price, min_q, max_q = serv
-    send_msg(chat_id, f"🛒 {name}\n💰 السعر: {price} USD/1000\n🔢 الحدود: {min_q}-{max_q}\n✍️ أرسل الكمية:")
+    send_msg(chat_id, f"🛒 {name}\n💰 السعر: {price} دولار/1000\n🔢 الحدود: {min_q}-{max_q}\n✍️ أرسل الكمية:")
     user_states[user_id] = {'type': 'order_qty', 'service_id': service_id}
 
+# ========== لوحة التحكم المتكاملة ==========
 def admin_panel(chat_id):
     buttons = [
-        [{'text': '📊 إحصائيات', 'callback_data': 'stats'}, {'text': '👥 المستخدمين', 'callback_data': 'users_list'}],
-        [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن رصيد', 'callback_data': 'admin_charge'}],
-        [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_manage'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
+        [{'text': '📊 الإحصائيات', 'callback_data': 'stats'}, {'text': '👥 إدارة المستخدمين', 'callback_data': 'users_management'}],
+        [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن الرصيد', 'callback_data': 'admin_charge'}],
+        [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_management'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
         [{'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}, {'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}],
-        [{'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}, {'text': '🔗 تغيير آيدي مستخدم', 'callback_data': 'change_user_id'}],  # تم الإضافة
-        [{'text': '🔙 رئيسية', 'callback_data': 'main'}]
+        [{'text': '🧾 نظام الفواتير', 'callback_data': 'invoice_system'}, {'text': '🗑️ إدارة البيانات', 'callback_data': 'data_management'}],
+        [{'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}, {'text': '🔙 الرئيسية', 'callback_data': 'main'}]
     ]
     send_msg(chat_id, "👑 <b>لوحة تحكم المدير</b>", buttons)
 
-def user_details(chat_id, target_id):
-    c.execute("SELECT * FROM users WHERE user_id = ?", (target_id,))
-    user = c.fetchone()
+def ban_management_menu(chat_id, page=0):
+    """قائمة إدارة الحظر"""
+    c.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
+    total_banned = c.fetchone()[0]
     
-    if not user:
-        send_msg(chat_id, "❌ المستخدم غير موجود")
-        return
+    c.execute("SELECT user_id, username, balance FROM users WHERE is_banned = 1 LIMIT 10 OFFSET ?", (page * 10,))
+    banned_users = c.fetchall()
     
-    status = "🚫 محظور" if user[4] == 1 else "⛔ مقيد" if user[5] == 1 else "👑 مشرف" if user[3] == 1 else "✅ نشط"
+    text = f"🚫 <b>إدارة المستخدمين المحظورين</b>\n\n"
+    text += f"👥 عدد المحظورين: {total_banned}\n━━━━━━━━━━━━\n"
     
-    text = f"""👤 <b>معلومات المستخدم</b>
-
-🆔 الآيدي: <code>{target_id}</code>
-📛 اليوزر: @{user[1] or 'بدون'}
-💰 الرصيد: {user[2]:,.2f} USD
-📊 الحالة: {status}
-📅 تاريخ الإنشاء: {user[8]}
-"""
+    if banned_users:
+        for user_id, username, balance in banned_users:
+            text += f"🆔 {user_id} | @{username or 'بدون'}\n💰 {balance:,.2f} دولار\n"
+            text += f"━━━━━━\n"
+    else:
+        text += "📭 لا يوجد مستخدمين محظورين\n"
     
-    buttons = [
-        [{'text': '🚫 حظر', 'callback_data': f'ban_{target_id}'}, {'text': '✅ فك حظر', 'callback_data': f'unban_{target_id}'}],
-        [{'text': '⛔ تقييد', 'callback_data': f'restrict_{target_id}'}, {'text': '🔓 فك تقييد', 'callback_data': f'unrestrict_{target_id}'}],
-        [{'text': '👑 رفع مشرف', 'callback_data': f'promote_{target_id}'}, {'text': '👤 خفض مشرف', 'callback_data': f'demote_{target_id}'}],
-        [{'text': '💰 شحن رصيد', 'callback_data': f'charge_{target_id}'}, {'text': '📩 إرسال رسالة', 'callback_data': f'msg_{target_id}'}],
-        [{'text': '🔙 رجوع', 'callback_data': 'users_list'}]
-    ]
+    buttons = []
+    
+    # أزرار المستخدمين
+    for user_id, username, balance in banned_users:
+        buttons.append([
+            {'text': f'✅ فك الحظر', 'callback_data': f'unban_{user_id}'},
+            {'text': f'📩 رسالة', 'callback_data': f'msg_{user_id}'},
+            {'text': f'🗑️ حذف', 'callback_data': f'deleteuser_{user_id}'}
+        ])
+    
+    # أزرار التنقل
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append({'text': '⬅️ السابق', 'callback_data': f'banpage_{page-1}'})
+    if len(banned_users) == 10:
+        nav_buttons.append({'text': '➡️ التالي', 'callback_data': f'banpage_{page+1}'})
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # أزرار الإدارة
+    buttons.append([
+        {'text': '🚫 حظر مستخدم', 'callback_data': 'ban_by_id'},
+        {'text': '🔍 بحث', 'callback_data': 'search_banned'}
+    ])
+    
+    buttons.append([{'text': '🗑️ حذف كل المحظورين', 'callback_data': 'delete_all_banned_confirm'}])
+    buttons.append([{'text': '🔙 رجوع', 'callback_data': 'admin'}])
     
     send_msg(chat_id, text, buttons)
 
-# معالجة الرسائل
+def users_management_menu(chat_id, page=0, search_query=None):
+    """إدارة المستخدمين الكاملة"""
+    if search_query:
+        c.execute("SELECT COUNT(*) FROM users WHERE user_id LIKE ? OR username LIKE ?", 
+                  (f'%{search_query}%', f'%{search_query}%'))
+        total_users = c.fetchone()[0]
+        c.execute("SELECT user_id, username, balance, is_banned, is_restricted, is_admin FROM users WHERE user_id LIKE ? OR username LIKE ? LIMIT 10 OFFSET ?", 
+                  (f'%{search_query}%', f'%{search_query}%', page * 10))
+    else:
+        c.execute("SELECT COUNT(*) FROM users")
+        total_users = c.fetchone()[0]
+        c.execute("SELECT user_id, username, balance, is_banned, is_restricted, is_admin FROM users LIMIT 10 OFFSET ?", (page * 10,))
+    
+    users = c.fetchall()
+    
+    text = f"👥 <b>إدارة المستخدمين</b>\n\n"
+    text += f"📊 العدد الكلي: {total_users}\n"
+    if search_query:
+        text += f"🔍 نتائج البحث: {search_query}\n"
+    text += "━━━━━━━━━━━━\n"
+    
+    if users:
+        for user_id, username, balance, is_banned, is_restricted, is_admin in users:
+            status = "🚫" if is_banned else "⛔" if is_restricted else "👑" if is_admin else "✅"
+            text += f"{status} {user_id} | @{username or 'بدون'}\n💰 {balance:,.2f} دولار\n━━━━━━\n"
+    else:
+        text += "📭 لا يوجد مستخدمين\n"
+    
+    buttons = []
+    
+    for user_id, username, balance, is_banned, is_restricted, is_admin in users:
+        # الصف الأول: حظر/تقييد/رفع
+        row1 = []
+        if is_banned:
+            row1.append({'text': '✅ فك الحظر', 'callback_data': f'unban_{user_id}'})
+        else:
+            row1.append({'text': '🚫 حظر', 'callback_data': f'ban_{user_id}'})
+        
+        if is_restricted:
+            row1.append({'text': '🔓 فك التقييد', 'callback_data': f'unrestrict_{user_id}'})
+        else:
+            row1.append({'text': '⛔ تقييد', 'callback_data': f'restrict_{user_id}'})
+        
+        if is_admin:
+            row1.append({'text': '👤 خفض صلاحيات', 'callback_data': f'demote_{user_id}'})
+        else:
+            row1.append({'text': '👑 رفع مشرف', 'callback_data': f'promote_{user_id}'})
+        
+        buttons.append(row1)
+        
+        # الصف الثاني: شحن/رسالة/حذف
+        buttons.append([
+            {'text': '💰 شحن رصيد', 'callback_data': f'charge_{user_id}'},
+            {'text': '📩 إرسال رسالة', 'callback_data': f'msg_{user_id}'},
+            {'text': '🗑️ حذف المستخدم', 'callback_data': f'deleteuser_{user_id}'}
+        ])
+    
+    # التنقل
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append({'text': '⬅️ السابق', 'callback_data': f'userspage_{page-1}'})
+    if len(users) == 10:
+        nav_buttons.append({'text': '➡️ التالي', 'callback_data': f'userspage_{page+1}'})
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # أدوات الإدارة
+    buttons.append([
+        {'text': '🔍 بحث عن مستخدم', 'callback_data': 'search_users'},
+        {'text': '📊 إحصائيات', 'callback_data': 'users_stats'}
+    ])
+    
+    buttons.append([
+        {'text': '🎁 شحن للجميع', 'callback_data': 'send_all'},
+        {'text': '🗑️ حذف كل المستخدمين', 'callback_data': 'delete_all_users_confirm'}
+    ])
+    
+    buttons.append([{'text': '🔙 رجوع', 'callback_data': 'admin'}])
+    
+    send_msg(chat_id, text, buttons)
+
+def invite_system_menu(chat_id, user_id):
+    """نظام الدعوة"""
+    c.execute("SELECT invite_code, total_invites FROM users WHERE user_id = ?", (user_id,))
+    user_data = c.fetchone()
+    
+    if not user_data:
+        send_msg(chat_id, "❌ المستخدم غير موجود")
+        return
+    
+    invite_code, total_invites = user_data
+    reward = float(get_setting('invite_reward'))
+    
+    # إنشاء رابط الدعوة الجديد
+    bot_username = get_setting('bot_username') or BOT_USERNAME
+    user_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    link = f"https://t.me/{bot_username}?start={invite_code}_{user_id}_{user_code}"
+    
+    # الحصول على المدعوين
+    c.execute('''SELECT u.user_id, u.username, u.created_at 
+                 FROM users u WHERE u.invited_by = ? ORDER BY u.created_at DESC LIMIT 10''', (user_id,))
+    invited_users = c.fetchall()
+    
+    text = f"""👥 <b>دعوة الأصدقاء</b>
+
+💰 المكافأة لكل دعوة: {reward} دولار
+👥 عدد المدعوين: {total_invites}
+💰 إجمالي الأرباح: {total_invites * reward:,.2f} دولار
+
+🔗 رابط الدعوة الخاص بك:
+<code>{link}</code>
+
+📋 آخر المدعوين:"""
+    
+    if invited_users:
+        for inv_user_id, inv_username, inv_date in invited_users:
+            text += f"\n👤 @{inv_username or 'مستخدم'} - {inv_date[:10]}"
+    else:
+        text += "\n📭 لا يوجد مدعوين بعد"
+    
+    buttons = [[
+        {'text': '📤 مشاركة الرابط', 'url': f'tg://msg_url?url={link}'},
+        {'text': '🔄 تحديث', 'callback_data': 'invite_refresh'}
+    ], [
+        {'text': '📊 قائمة المدعوين', 'callback_data': 'invites_list'}
+    ], [
+        {'text': '🔙 رجوع', 'callback_data': 'main'}
+    ]]
+    
+    send_msg(chat_id, text, buttons)
+
+# ========== معالجة الطلبات مع الروابط ==========
 user_states = {}
 
 def handle_message(chat_id, user_id, text):
-    # التحقق من القنوات
     subscribed, channel = check_channels(user_id)
     if not subscribed:
         buttons = [[
@@ -249,7 +429,6 @@ def handle_message(chat_id, user_id, text):
         send_msg(chat_id, f"📢 يجب الاشتراك في @{channel} أولاً", buttons)
         return
     
-    # التحقق من الحظر
     c.execute("SELECT is_banned, is_restricted FROM users WHERE user_id = ?", (user_id,))
     user_status = c.fetchone()
     if user_status:
@@ -277,110 +456,87 @@ def handle_message(chat_id, user_id, text):
                         user_states[user_id] = {'type': 'order_link', 'service_id': service_id, 'quantity': quantity, 'total': total_price}
                         send_msg(chat_id, f"✍️ أرسل الرابط لـ {name}:")
                     else:
-                        send_msg(chat_id, f"❌ الحدود {min_q}-{max_q}")
+                        send_msg(chat_id, f"❌ الحدود المسموحة {min_q}-{max_q}")
                 except:
                     send_msg(chat_id, "❌ أدخل رقم صحيح")
             return
         
         elif state['type'] == 'order_link':
-            link = text
+            link = text.strip()
             service_id = state['service_id']
             quantity = state['quantity']
             total = state['total']
+            
+            # التحقق من صحة الرابط
+            if not link.startswith(('http://', 'https://')):
+                send_msg(chat_id, "❌ رابط غير صالح. أرسل رابط يبدأ بـ http:// أو https://")
+                return
             
             c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
             balance = c.fetchone()[0]
             
             if balance >= total:
+                # خصم المبلغ
                 c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (total, user_id))
+                
+                # حفظ الطلب
                 c.execute("INSERT INTO orders (user_id, service_id, quantity, total_price, link) VALUES (?, ?, ?, ?, ?)",
                           (user_id, service_id, quantity, total, link))
                 order_id = c.lastrowid
                 conn.commit()
                 
-                send_msg(chat_id, f"✅ تم إرسال الطلب #{order_id}\n💰 المبلغ: {total:,.2f} USD")
-                
-                # إشعار للمدير
+                # إرسال إشعار للمستخدم
                 c.execute("SELECT name FROM services WHERE id = ?", (service_id,))
                 service_name = c.fetchone()[0]
-                send_msg(ADMIN_ID, f"🆕 طلب جديد #{order_id}\n👤 {user_id}\n📦 {service_name}\n💰 {total:,.2f} USD")
+                
+                send_msg(chat_id, f"""✅ تم إرسال الطلب #{order_id} بنجاح!
+
+📦 الخدمة: {service_name}
+🔢 الكمية: {quantity:,}
+💰 المبلغ: {total:,.2f} دولار
+🔗 الرابط: {link[:50]}...
+
+📊 رصيدك الجديد: {balance - total:,.2f} دولار""")
+                
+                # إرسال إشعار مفصل للمدير
+                admin_msg = f"""🆕 طلب جديد #{order_id}
+
+👤 المستخدم: {user_id}
+📦 الخدمة: {service_name}
+🔢 الكمية: {quantity:,}
+💰 المبلغ: {total:,.2f} دولار
+🔗 الرابط: {link}
+
+📊 رصيد المستخدم: {balance - total:,.2f} دولار"""
+                
+                admin_buttons = [[
+                    {'text': '✅ إكمال الطلب', 'callback_data': f'complete_{order_id}'},
+                    {'text': '❌ إلغاء الطلب', 'callback_data': f'cancel_{order_id}'}
+                ]]
+                
+                send_msg(ADMIN_ID, admin_msg, admin_buttons)
+                
             else:
                 send_msg(chat_id, "❌ رصيد غير كافي")
             
             del user_states[user_id]
             return
         
-        elif state.get('type') == 'add_category':
-            if len(text) > 1:
-                c.execute("INSERT INTO categories (name) VALUES (?)", (text,))
+        # حالات إدارة الحظر
+        elif state.get('type') == 'ban_by_id':
+            if text.isdigit():
+                target_id = int(text)
+                c.execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,))
                 conn.commit()
-                send_msg(chat_id, f"✅ تم إضافة قسم: {text}")
+                send_msg(chat_id, f"✅ تم حظر المستخدم {target_id}")
+                send_msg(target_id, "🚫 تم حظرك من البوت")
+            else:
+                send_msg(chat_id, "❌ آيدي غير صحيح")
             del user_states[user_id]
             return
         
-        elif state.get('type') == 'add_service_name':
-            c.execute("SELECT id FROM categories WHERE id = ?", (state['cat_id'],))
-            if not c.fetchone():
-                send_msg(chat_id, "❌ القسم غير موجود")
-                del user_states[user_id]
-                return
-            
-            user_states[user_id] = {'type': 'add_service_price', 'cat_id': state['cat_id'], 'name': text}
-            send_msg(chat_id, "💰 أرسل السعر لكل 1000:")
-            return
-        
-        elif state.get('type') == 'add_service_price':
-            try:
-                price = float(text)
-                user_states[user_id] = {'type': 'add_service_min', 'cat_id': state['cat_id'], 'name': state['name'], 'price': price}
-                send_msg(chat_id, "🔢 أرسل الحد الأدنى:")
-            except:
-                send_msg(chat_id, "❌ سعر غير صحيح")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'add_service_min':
-            try:
-                min_order = int(text)
-                user_states[user_id] = {'type': 'add_service_max', 'cat_id': state['cat_id'], 'name': state['name'], 
-                                       'price': state['price'], 'min': min_order}
-                send_msg(chat_id, "🔢 أرسل الحد الأقصى:")
-            except:
-                send_msg(chat_id, "❌ رقم غير صحيح")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'add_service_max':
-            try:
-                max_order = int(text)
-                c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (?, ?, ?, ?, ?)",
-                          (state['cat_id'], state['name'], state['price'], state['min'], max_order))
-                conn.commit()
-                send_msg(chat_id, f"✅ تم إضافة الخدمة: {state['name']}")
-                del user_states[user_id]
-            except:
-                send_msg(chat_id, "❌ رقم غير صحيح")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'add_channel_id':
-            channel_id = text
-            user_states[user_id] = {'type': 'add_channel_user', 'channel_id': channel_id}
-            send_msg(chat_id, "📛 أرسل يوزر القناة (بدون @):")
-            return
-        
-        elif state.get('type') == 'add_channel_user':
-            channel_user = text
-            user_states[user_id] = {'type': 'add_channel_url', 'channel_id': state['channel_id'], 'channel_user': channel_user}
-            send_msg(chat_id, "🔗 أرسل رابط القناة:")
-            return
-        
-        elif state.get('type') == 'add_channel_url':
-            channel_url = text
-            c.execute("INSERT INTO forced_channels (channel_id, channel_username, channel_url) VALUES (?, ?, ?)",
-                      (state['channel_id'], state['channel_user'], channel_url))
-            conn.commit()
-            send_msg(chat_id, f"✅ تم إضافة القناة @{state['channel_user']}")
+        elif state.get('type') == 'search_users':
+            users_management_menu(chat_id, search_query=text)
             del user_states[user_id]
             return
         
@@ -397,46 +553,15 @@ def handle_message(chat_id, user_id, text):
         elif state.get('type') == 'admin_charge_amount':
             try:
                 amount = float(text)
-                target_id = user_states[user_id]['target_id']
+                target_id = state['target_id']
                 c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_id))
                 conn.commit()
-                send_msg(chat_id, f"✅ تم شحن {amount:,.2f} USD للمستخدم {target_id}")
-                send_msg(target_id, f"🎉 تم شحن رصيدك\nالمبلغ: {amount:,.2f} USD")
+                send_msg(chat_id, f"✅ تم شحن {amount:,.2f} دولار للمستخدم {target_id}")
+                send_msg(target_id, f"🎉 تم شحن رصيدك!\nالمبلغ: {amount:,.2f} دولار")
                 del user_states[user_id]
             except:
                 send_msg(chat_id, "❌ مبلغ غير صحيح")
                 del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'send_to_all_amount':
-            try:
-                amount = float(text)
-                user_states[user_id] = {'type': 'send_to_all_msg', 'amount': amount}
-                send_msg(chat_id, "📝 أرسل الرسالة المراد إرسالها مع المبلغ:")
-            except:
-                send_msg(chat_id, "❌ مبلغ غير صحيح")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'send_to_all_msg':
-            message = text
-            amount = user_states[user_id]['amount']
-            
-            c.execute("SELECT user_id FROM users WHERE is_banned = 0")
-            users = c.fetchall()
-            
-            count = 0
-            for u in users:
-                user_id_target = u[0]
-                if user_id_target != ADMIN_ID:
-                    c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id_target))
-                    send_msg(user_id_target, f"🎁 {message}\n💰 المكافأة: {amount:,.2f} USD")
-                    count += 1
-                    time.sleep(0.1)
-            
-            conn.commit()
-            send_msg(chat_id, f"✅ تم إرسال {amount:,.2f} USD لـ {count} مستخدم")
-            del user_states[user_id]
             return
         
         elif state.get('type') == 'send_user_message':
@@ -445,85 +570,28 @@ def handle_message(chat_id, user_id, text):
             send_msg(chat_id, f"✅ تم إرسال الرسالة للمستخدم {target_id}")
             del user_states[user_id]
             return
-        
-        # ===== التعديلات الجديدة =====
-        elif state.get('type') == 'change_user_id':
-            if text.isdigit():
-                old_id = int(text)
-                user_states[user_id] = {'type': 'change_user_id_new', 'old_id': old_id}
-                send_msg(chat_id, f"🔁 أرسل الآيدي الجديد للمستخدم {old_id}:")
-            else:
-                send_msg(chat_id, "❌ آيدي غير صحيح")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'change_user_id_new':
-            try:
-                old_id = state['old_id']
-                new_id = int(text)
-                
-                # التحقق من وجود المستخدم القديم
-                c.execute("SELECT * FROM users WHERE user_id = ?", (old_id,))
-                if not c.fetchone():
-                    send_msg(chat_id, "❌ المستخدم القديم غير موجود")
-                    del user_states[user_id]
-                    return
-                
-                # التحقق من عدم وجود مستخدم بالآيدي الجديد
-                c.execute("SELECT * FROM users WHERE user_id = ?", (new_id,))
-                if c.fetchone():
-                    send_msg(chat_id, "❌ الآيدي الجديد موجود مسبقاً")
-                    del user_states[user_id]
-                    return
-                
-                # نقل جميع البيانات
-                # 1. نسخ بيانات المستخدم
-                c.execute("UPDATE users SET user_id = ? WHERE user_id = ?", (new_id, old_id))
-                
-                # 2. تحديث الطلبات
-                c.execute("UPDATE orders SET user_id = ? WHERE user_id = ?", (new_id, old_id))
-                
-                # 3. تحديث الدعوات
-                c.execute("UPDATE users SET invited_by = ? WHERE invited_by = ?", (new_id, old_id))
-                
-                conn.commit()
-                send_msg(chat_id, f"✅ تم تغيير آيدي المستخدم من {old_id} إلى {new_id}")
-                send_msg(new_id, f"🔄 تم تغيير آيدي حسابك إلى {new_id}")
-                del user_states[user_id]
-            except:
-                send_msg(chat_id, "❌ حدث خطأ في تغيير الآيدي")
-                del user_states[user_id]
-            return
-        
-        elif state.get('type') == 'change_reward':
-            try:
-                new_reward = float(text)
-                if new_reward < 0:
-                    send_msg(chat_id, "❌ المبلغ يجب أن يكون موجباً")
-                else:
-                    c.execute("UPDATE settings SET value = ? WHERE key = 'invite_reward'", (str(new_reward),))
-                    conn.commit()
-                    send_msg(chat_id, f"✅ تم تغيير مكافأة الدعوة إلى {new_reward} USD")
-                del user_states[user_id]
-            except:
-                send_msg(chat_id, "❌ مبلغ غير صحيح")
-                del user_states[user_id]
-            return
-        # ===== نهاية التعديلات الجديدة =====
     
-    if text == '/start':
-        # التحقق من كود الدعوة
-        if ' ' in text:
-            invite_code = text.split(' ')[1]
-            c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
-            inviter = c.fetchone()
-            
-            if inviter and inviter[0] != user_id and get_setting('invite_enabled') == 'true':
-                reward = float(get_setting('invite_reward'))
-                c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, inviter[0]))
-                conn.commit()
-                send_msg(inviter[0], f"🎉 مكافأة دعوة {reward} USD")
+    if text.startswith('/start'):
+        # معالجة رابط الدعوة
+        parts = text.split()
+        if len(parts) > 1:
+            invite_data = parts[1]
+            if '_' in invite_data:
+                invite_parts = invite_data.split('_')
+                if len(invite_parts) >= 1:
+                    invite_code = invite_parts[0]
+                    c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
+                    inviter = c.fetchone()
+                    
+                    if inviter and inviter[0] != user_id and get_setting('invite_enabled') == 'true':
+                        reward = float(get_setting('invite_reward'))
+                        c.execute("UPDATE users SET balance = balance + ?, total_invites = total_invites + 1 WHERE user_id = ?", 
+                                  (reward, inviter[0]))
+                        c.execute("UPDATE users SET invited_by = ? WHERE user_id = ?", (inviter[0], user_id))
+                        conn.commit()
+                        send_msg(inviter[0], f"🎉 مكافأة دعوة {reward} دولار! انضم مستخدم جديد.")
         
+        # تسجيل المستخدم الجديد
         c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if not c.fetchone():
             invite_code = str(uuid.uuid4())[:8]
@@ -539,7 +607,6 @@ def handle_message(chat_id, user_id, text):
         main_menu(chat_id, user_id)
 
 def handle_callback(chat_id, user_id, data):
-    # التحقق من القنوات
     if data != 'check_sub':
         subscribed, channel = check_channels(user_id)
         if not subscribed:
@@ -582,41 +649,20 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'balance':
         c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         balance = c.fetchone()[0]
-        send_msg(chat_id, f"💰 رصيدك: {balance:,.2f} USD")
+        send_msg(chat_id, f"💰 رصيدك: {balance:,.2f} دولار")
     
     elif data == 'invite':
-        c.execute("SELECT invite_code FROM users WHERE user_id = ?", (user_id,))
-        code = c.fetchone()[0]
-        
-        # ===== التعديل: رابط الدعوة الجديد =====
-        # إنشاء رابط على شكل: https://t.me/Flashback70bot?start=CODE_USERID_RANDOM
-        bot_username = get_setting('bot_username') or BOT_USERNAME
-        user_code = generate_user_code()
-        link = f"https://t.me/{bot_username}?start={code}_{user_id}_{user_code}"
-        # ===== نهاية التعديل =====
-        
-        reward = get_setting('invite_reward')
-        
-        text = f"""👥 <b>دعوة أصدقاء</b>
-
-💰 المكافأة: {reward} USD
-🔗 رابطك: {link}"""
-        
-        buttons = [[
-            {'text': '📤 مشاركة', 'url': f'tg://msg_url?url={link}'},
-            {'text': '🔙 رجوع', 'callback_data': 'main'}
-        ]]
-        send_msg(chat_id, text, buttons)
+        invite_system_menu(chat_id, user_id)
     
     elif data == 'my_orders':
-        c.execute("SELECT o.id, s.name, o.quantity, o.total_price, o.status FROM orders o JOIN services s ON o.service_id = s.id WHERE o.user_id = ? ORDER BY o.id DESC LIMIT 5", (user_id,))
+        c.execute("SELECT o.id, s.name, o.quantity, o.total_price, o.status FROM orders o JOIN services s ON o.service_id = s.id WHERE o.user_id = ? ORDER BY o.id DESC LIMIT 10", (user_id,))
         orders = c.fetchall()
         
         if orders:
             text = "📋 <b>طلباتك</b>\n\n"
             for oid, name, qty, price, status in orders:
                 status_icon = '✅' if status == 'completed' else '⏳' if status == 'processing' else '❌'
-                text += f"{status_icon} #{oid} - {name[:15]}\n🔢 {qty} | 💰 {price:,.2f} USD\n━━━━━━\n"
+                text += f"{status_icon} #{oid} - {name}\n🔢 {qty:,} | 💰 {price:,.2f} دولار\n━━━━━━\n"
         else:
             text = "📭 لا توجد طلبات"
         
@@ -648,15 +694,31 @@ def handle_callback(chat_id, user_id, data):
 👑 المشرفين: {admins}
 🚫 المحظورين: {banned}
 ⛔ المقيدين: {restricted}
-💰 إجمالي الأرصدة: {balance:,.2f} USD
+💰 إجمالي الأرصدة: {balance:,.2f} دولار
 📦 الطلبات: {orders}"""
             send_msg(chat_id, text)
     
-    elif data == 'users_list':
-        c.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
-        if c.fetchone()[0] == 1:
-            user_states[user_id] = {'type': 'view_user'}
-            send_msg(chat_id, "🔍 أرسل آيدي المستخدم:")
+    elif data == 'users_management':
+        users_management_menu(chat_id)
+    
+    elif data.startswith('userspage_'):
+        page = int(data.split('_')[1])
+        users_management_menu(chat_id, page)
+    
+    elif data == 'ban_management':
+        ban_management_menu(chat_id)
+    
+    elif data.startswith('banpage_'):
+        page = int(data.split('_')[1])
+        ban_management_menu(chat_id, page)
+    
+    elif data == 'search_users':
+        user_states[user_id] = {'type': 'search_users'}
+        send_msg(chat_id, "🔍 أرسل آيدي المستخدم أو يوزره للبحث:")
+    
+    elif data == 'ban_by_id':
+        user_states[user_id] = {'type': 'ban_by_id'}
+        send_msg(chat_id, "🚫 أرسل آيدي المستخدم للحظر:")
     
     elif data.startswith('ban_'):
         target_id = int(data.split('_')[1])
@@ -670,7 +732,7 @@ def handle_callback(chat_id, user_id, data):
         c.execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,))
         conn.commit()
         send_msg(chat_id, f"✅ تم فك حظر المستخدم {target_id}")
-        send_msg(target_id, "✅ تم فك حظرك")
+        send_msg(target_id, "✅ تم فك حظرك من البوت")
     
     elif data.startswith('restrict_'):
         target_id = int(data.split('_')[1])
@@ -710,80 +772,65 @@ def handle_callback(chat_id, user_id, data):
         user_states[user_id] = {'type': 'send_user_message', 'target_id': target_id}
         send_msg(chat_id, f"📝 أرسل الرسالة للمستخدم {target_id}:")
     
+    elif data.startswith('deleteuser_'):
+        target_id = int(data.split('_')[1])
+        buttons = [[
+            {'text': '✅ نعم، احذف', 'callback_data': f'confirm_delete_{target_id}'},
+            {'text': '❌ إلغاء', 'callback_data': 'users_management'}
+        ]]
+        send_msg(chat_id, f"⚠️ هل تريد حقاً حذف المستخدم {target_id}؟\nسيتم حذف جميع بياناته.", buttons)
+    
+    elif data.startswith('confirm_delete_'):
+        target_id = int(data.split('_')[2])
+        c.execute("DELETE FROM users WHERE user_id = ?", (target_id,))
+        c.execute("DELETE FROM orders WHERE user_id = ?", (target_id,))
+        conn.commit()
+        send_msg(chat_id, f"✅ تم حذف المستخدم {target_id} وجميع بياناته")
+    
+    elif data == 'delete_all_users_confirm':
+        buttons = [[
+            {'text': '⚠️ نعم، احذف الكل', 'callback_data': 'delete_all_users'},
+            {'text': '❌ إلغاء', 'callback_data': 'users_management'}
+        ]]
+        send_msg(chat_id, "⚠️ <b>تحذير!</b>\nهل تريد حقاً حذف جميع المستخدمين؟\nهذا الإجراء لا يمكن التراجع عنه.", buttons)
+    
+    elif data == 'delete_all_users':
+        c.execute("DELETE FROM users WHERE user_id != ?", (ADMIN_ID,))
+        c.execute("DELETE FROM orders")
+        conn.commit()
+        send_msg(chat_id, "✅ تم حذف جميع المستخدمين والطلبات")
+    
+    elif data == 'delete_all_banned_confirm':
+        buttons = [[
+            {'text': '⚠️ نعم، احذف المحظورين', 'callback_data': 'delete_all_banned'},
+            {'text': '❌ إلغاء', 'callback_data': 'ban_management'}
+        ]]
+        send_msg(chat_id, "⚠️ هل تريد حذف جميع المستخدمين المحظورين؟", buttons)
+    
+    elif data == 'delete_all_banned':
+        c.execute("DELETE FROM users WHERE is_banned = 1 AND user_id != ?", (ADMIN_ID,))
+        conn.commit()
+        send_msg(chat_id, "✅ تم حذف جميع المستخدمين المحظورين")
+    
     elif data == 'manage_services':
         buttons = [
             [{'text': '📁 إضافة قسم', 'callback_data': 'add_category'}],
             [{'text': '➕ إضافة خدمة', 'callback_data': 'add_service'}],
+            [{'text': '📋 قائمة الخدمات', 'callback_data': 'list_services'}],
             [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
         ]
         send_msg(chat_id, "🛍️ إدارة الخدمات:", buttons)
-    
-    elif data == 'add_category':
-        user_states[user_id] = {'type': 'add_category'}
-        send_msg(chat_id, "➕ أرسل اسم القسم الجديد:")
-    
-    elif data == 'add_service':
-        c.execute("SELECT id, name FROM categories")
-        cats = c.fetchall()
-        
-        if not cats:
-            send_msg(chat_id, "❌ لا توجد أقسام")
-            return
-        
-        buttons = []
-        for cat_id, name in cats:
-            buttons.append([{'text': name, 'callback_data': f'addserv_{cat_id}'}])
-        
-        buttons.append([{'text': '🔙 رجوع', 'callback_data': 'manage_services'}])
-        send_msg(chat_id, "📁 اختر قسم:", buttons)
-    
-    elif data.startswith('addserv_'):
-        cat_id = data.split('_')[1]
-        user_states[user_id] = {'type': 'add_service_name', 'cat_id': cat_id}
-        send_msg(chat_id, "➕ أرسل اسم الخدمة:")
     
     elif data == 'admin_charge':
         user_states[user_id] = {'type': 'admin_charge_user'}
         send_msg(chat_id, "💰 أرسل آيدي المستخدم:")
     
-    elif data == 'ban_manage':
-        buttons = [
-            [{'text': '🚫 حظر مستخدم', 'callback_data': 'ban_user'}, {'text': '✅ فك حظر', 'callback_data': 'unban_user'}],
-            [{'text': '⛔ تقييد مستخدم', 'callback_data': 'restrict_user'}, {'text': '🔓 فك تقييد', 'callback_data': 'unrestrict_user'}],
-            [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
-        ]
-        send_msg(chat_id, "🚫 إدارة الحظر:", buttons)
-    
-    elif data == 'ban_user':
-        user_states[user_id] = {'type': 'ban_user'}
-        send_msg(chat_id, "🚫 أرسل آيدي المستخدم للحظر:")
-    
-    elif data == 'unban_user':
-        user_states[user_id] = {'type': 'unban_user'}
-        send_msg(chat_id, "✅ أرسل آيدي المستخدم لفك الحظر:")
-    
-    elif data == 'restrict_user':
-        user_states[user_id] = {'type': 'restrict_user'}
-        send_msg(chat_id, "⛔ أرسل آيدي المستخدم للتقييد:")
-    
-    elif data == 'unrestrict_user':
-        user_states[user_id] = {'type': 'unrestrict_user'}
-        send_msg(chat_id, "🔓 أرسل آيدي المستخدم لفك التقييد:")
-    
     elif data == 'admin_manage':
         buttons = [
             [{'text': '👑 رفع مشرف', 'callback_data': 'promote_admin'}, {'text': '👤 خفض مشرف', 'callback_data': 'demote_admin'}],
-            [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
+            [{'text': '📋 قائمة المشرفين', 'callback_data': 'list_admins'}, {'text': '🔙 رجوع', 'callback_data': 'admin'}]
         ]
         send_msg(chat_id, "👑 إدارة المشرفين:", buttons)
-    
-    elif data == 'promote_admin':
-        user_states[user_id] = {'type': 'promote_admin'}
-        send_msg(chat_id, "👑 أرسل آيدي المستخدم للرفع:")
-    
-    elif data == 'demote_admin':
-        user_states[user_id] = {'type': 'demote_admin'}
-        send_msg(chat_id, "👤 أرسل آيدي المستخدم للخفض:")
     
     elif data == 'channels_manage':
         c.execute("SELECT * FROM forced_channels")
@@ -803,41 +850,6 @@ def handle_callback(chat_id, user_id, data):
         ]
         send_msg(chat_id, text, buttons)
     
-    elif data == 'add_channel':
-        user_states[user_id] = {'type': 'add_channel_id'}
-        send_msg(chat_id, "🆔 أرسل آيدي القناة:")
-    
-    elif data == 'remove_channel':
-        c.execute("SELECT id, channel_username FROM forced_channels")
-        channels = c.fetchall()
-        
-        if not channels:
-            send_msg(chat_id, "📭 لا توجد قنوات")
-            return
-        
-        buttons = []
-        for ch_id, ch_user in channels:
-            buttons.append([{'text': f'🗑️ @{ch_user}', 'callback_data': f'remchannel_{ch_id}'}])
-        
-        buttons.append([{'text': '🔙 رجوع', 'callback_data': 'channels_manage'}])
-        send_msg(chat_id, "🗑️ اختر قناة للحذف:", buttons)
-    
-    elif data.startswith('remchannel_'):
-        ch_id = int(data.split('_')[1])
-        c.execute("DELETE FROM forced_channels WHERE id = ?", (ch_id,))
-        conn.commit()
-        send_msg(chat_id, "✅ تم حذف القناة")
-    
-    elif data == 'enable_force':
-        c.execute("UPDATE settings SET value = 'true' WHERE key = 'force_subscribe'")
-        conn.commit()
-        send_msg(chat_id, "✅ تم تفعيل الاشتراك الإجباري")
-    
-    elif data == 'disable_force':
-        c.execute("UPDATE settings SET value = 'false' WHERE key = 'force_subscribe'")
-        conn.commit()
-        send_msg(chat_id, "❌ تم تعطيل الاشتراك الإجباري")
-    
     elif data == 'send_all':
         user_states[user_id] = {'type': 'send_to_all_amount'}
         send_msg(chat_id, "💰 أرسل المبلغ المراد إرساله للجميع:")
@@ -845,17 +857,15 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'settings_menu':
         maint = get_setting('maintenance')
         reward = get_setting('invite_reward')
-        bot_user = get_setting('bot_username')
         
         text = f"""⚙️ <b>إعدادات البوت</b>
 
 🔧 الصيانة: {'✅ مفعل' if maint == 'true' else '❌ معطل'}
-💰 مكافأة الدعوة: {reward} USD
-🤖 يوزر البوت: @{bot_user}"""
+💰 مكافأة الدعوة: {reward} دولار"""
         
         buttons = [
             [{'text': '🔧 تبديل الصيانة', 'callback_data': 'toggle_maint'}, {'text': '💰 تغيير المكافأة', 'callback_data': 'change_reward'}],
-            [{'text': '🤖 تغيير يوزر البوت', 'callback_data': 'change_bot_user'}, {'text': '🔙 رجوع', 'callback_data': 'admin'}]
+            [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
         ]
         send_msg(chat_id, text, buttons)
     
@@ -870,119 +880,69 @@ def handle_callback(chat_id, user_id, data):
         user_states[user_id] = {'type': 'change_reward'}
         send_msg(chat_id, "💰 أرسل المبلغ الجديد:")
     
-    elif data == 'change_bot_user':
-        user_states[user_id] = {'type': 'change_bot_user'}
-        send_msg(chat_id, "🤖 أرسل يوزر البوت الجديد (بدون @):")
-    
-    # ===== التعديلات الجديدة =====
-    elif data == 'change_user_id':
-        user_states[user_id] = {'type': 'change_user_id'}
-        send_msg(chat_id, "🔁 أرسل الآيدي القديم للمستخدم:")
-    # ===== نهاية التعديلات الجديدة =====
-
-# ===== حل مشكلة Render =====
-def run_background_worker():
-    """تشغيل البوت كـ Background Worker"""
-    print("🚀 البوت يعمل على Render كـ Background Worker...")
-    print(f"👑 المدير: {ADMIN_ID}")
-    print(f"📞 الدعم: @{SUPPORT_USERNAME}")
-    print(f"🤖 البوت: @{BOT_USERNAME}")
-    
-    offset = 0
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-            params = {'offset': offset, 'timeout': 30}
-            response = requests.get(url, params=params, timeout=35)
-            
-            if response.status_code == 200:
-                updates = response.json()
-                if updates.get('ok'):
-                    for update in updates['result']:
-                        offset = update['update_id'] + 1
-                        
-                        if 'message' in update:
-                            msg = update['message']
-                            chat_id = msg['chat']['id']
-                            user_id = msg['from']['id']
-                            username = msg['from'].get('username', '')
-                            
-                            if 'text' in msg:
-                                text = msg['text']
-                                handle_message(chat_id, user_id, text)
-                        
-                        elif 'callback_query' in update:
-                            query = update['callback_query']
-                            chat_id = query['message']['chat']['id']
-                            user_id = query['from']['id']
-                            data = query['data']
-                            
-                            try:
-                                handle_callback(chat_id, user_id, data)
-                            except Exception as e:
-                                print(f"⚠️ خطأ في الكال باك: {e}")
-            
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في البولينغ: {e}")
-            time.sleep(5)
-
-# ===== الإضافة: خيار تشغيل كـ Web Service =====
-def run_web_service():
-    """تشغيل البوت كـ Web Service"""
-    from flask import Flask, request
-    import threading
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def home():
-        return "🤖 البوت يعمل على Render كـ Web Service"
-    
-    @app.route(f'/{TOKEN}', methods=['POST'])
-    def webhook():
-        update = request.json
-        if update:
-            if 'message' in update:
-                msg = update['message']
-                chat_id = msg['chat']['id']
-                user_id = msg['from']['id']
-                
-                if 'text' in msg:
-                    text = msg['text']
-                    handle_message(chat_id, user_id, text)
-            
-            elif 'callback_query' in update:
-                query = update['callback_query']
-                chat_id = query['message']['chat']['id']
-                user_id = query['from']['id']
-                data = query['data']
-                
-                try:
-                    handle_callback(chat_id, user_id, data)
-                except:
-                    pass
+    elif data == 'data_management':
+        c.execute("SELECT COUNT(*) FROM users")
+        users_count = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM orders")
+        orders_count = c.fetchone()[0]
         
-        return 'OK'
-    
-    # تشغيل البولينغ في خيط منفصل
-    threading.Thread(target=run_background_worker, daemon=True).start()
-    
-    # تشغيل Flask
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+        text = f"""🗑️ <b>إدارة البيانات</b>
 
-# التشغيل الرئيسي
-if __name__ == '__main__':
-    import os
-    
-    # اختيار وضع التشغيل حسب البيئة
-    if os.environ.get('RENDER', '').lower() == 'true':
-        # على Render - استخدم Web Service
-        print("🌐 تشغيل كـ Web Service...")
-        run_web_service()
-    else:
-        # محلي أو Background Worker
-        print("⚙️ تشغيل كـ Background Worker...")
-        run_background_worker()
+👥 عدد المستخدمين: {users_count}
+📦 عدد الطلبات: {orders_count}
+
+⚠️ <b>تحذير:</b> هذه العمليات لا يمكن التراجع عنها"""
+        
+        buttons = [
+            [{'text': '🧹 تنظيف الطلبات القديمة', 'callback_data': 'clean_old_orders'}],
+            [{'text': '🗑️ حذف جميع الطلبات', 'callback_data': 'delete_all_orders_confirm'}],
+            [{'text': '🗑️ حذف جميع المستخدمين', 'callback_data': 'delete_all_users_confirm'}],
+            [{'text': '💾 نسخ احتياطي', 'callback_data': 'backup_data'}],
+            [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
+        ]
+        send_msg(chat_id, text, buttons)
+
+# ========== تشغيل البوت ==========
+print("🚀 البوت يعمل...")
+print(f"👑 المدير: {ADMIN_ID}")
+print(f"📞 الدعم: @{SUPPORT_USERNAME}")
+print(f"🤖 البوت: @{BOT_USERNAME}")
+
+offset = 0
+while True:
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+        params = {'offset': offset, 'timeout': 30}
+        response = requests.get(url, params=params, timeout=35)
+        
+        if response.status_code == 200:
+            updates = response.json()
+            if updates.get('ok'):
+                for update in updates['result']:
+                    offset = update['update_id'] + 1
+                    
+                    if 'message' in update:
+                        msg = update['message']
+                        chat_id = msg['chat']['id']
+                        user_id = msg['from']['id']
+                        
+                        if 'text' in msg:
+                            text = msg['text']
+                            handle_message(chat_id, user_id, text)
+                    
+                    elif 'callback_query' in update:
+                        query = update['callback_query']
+                        chat_id = query['message']['chat']['id']
+                        user_id = query['from']['id']
+                        data = query['data']
+                        
+                        try:
+                            handle_callback(chat_id, user_id, data)
+                        except Exception as e:
+                            print(f"⚠️ خطأ في الكال باك: {e}")
+        
+        time.sleep(1)
+        
+    except Exception as e:
+        print(f"⚠️ خطأ في البولينغ: {e}")
+        time.sleep(5)
