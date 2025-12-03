@@ -3,11 +3,14 @@ import requests
 import time
 import json
 import uuid
+import random
+import string
 
 # إعدادات البوت
 TOKEN = "8436742877:AAHmlmOKY2iQCGoOt004ruq09tZGderDGMQ"
 ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
+BOT_USERNAME = "Flashback70bot"  # تم إضافة يوزر البوت هنا
 
 # قاعدة البيانات
 conn = sqlite3.connect('/tmp/bot.db', check_same_thread=False)
@@ -47,7 +50,8 @@ default_settings = [
     ('maintenance_msg', 'البوت تحت الصيانة'),
     ('invite_reward', '0.10'),
     ('invite_enabled', 'true'),
-    ('force_subscribe', 'false')
+    ('force_subscribe', 'false'),
+    ('bot_username', BOT_USERNAME)  # إضافة إعداد يوزر البوت
 ]
 
 for key, value in default_settings:
@@ -71,9 +75,9 @@ def send_msg(chat_id, text, buttons=None):
         data = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
         if buttons:
             data['reply_markup'] = json.dumps({'inline_keyboard': buttons})
-        requests.post(url, json=data, timeout=5)
-    except:
-        pass
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        print(f"⚠️ خطأ في الإرسال: {e}")
 
 def check_channels(user_id):
     c.execute("SELECT value FROM settings WHERE key = 'force_subscribe'")
@@ -99,6 +103,10 @@ def check_channels(user_id):
             continue
     
     return True, None
+
+def generate_user_code(length=6):
+    """إنشاء رمز عشوائي للمستخدم"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 # القوائم
 def main_menu(chat_id, user_id):
@@ -193,7 +201,8 @@ def admin_panel(chat_id):
         [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن رصيد', 'callback_data': 'admin_charge'}],
         [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_manage'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
         [{'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}, {'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}],
-        [{'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}, {'text': '🔙 رئيسية', 'callback_data': 'main'}]
+        [{'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}, {'text': '🔗 تغيير آيدي مستخدم', 'callback_data': 'change_user_id'}],  # تم الإضافة
+        [{'text': '🔙 رئيسية', 'callback_data': 'main'}]
     ]
     send_msg(chat_id, "👑 <b>لوحة تحكم المدير</b>", buttons)
 
@@ -436,6 +445,71 @@ def handle_message(chat_id, user_id, text):
             send_msg(chat_id, f"✅ تم إرسال الرسالة للمستخدم {target_id}")
             del user_states[user_id]
             return
+        
+        # ===== التعديلات الجديدة =====
+        elif state.get('type') == 'change_user_id':
+            if text.isdigit():
+                old_id = int(text)
+                user_states[user_id] = {'type': 'change_user_id_new', 'old_id': old_id}
+                send_msg(chat_id, f"🔁 أرسل الآيدي الجديد للمستخدم {old_id}:")
+            else:
+                send_msg(chat_id, "❌ آيدي غير صحيح")
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'change_user_id_new':
+            try:
+                old_id = state['old_id']
+                new_id = int(text)
+                
+                # التحقق من وجود المستخدم القديم
+                c.execute("SELECT * FROM users WHERE user_id = ?", (old_id,))
+                if not c.fetchone():
+                    send_msg(chat_id, "❌ المستخدم القديم غير موجود")
+                    del user_states[user_id]
+                    return
+                
+                # التحقق من عدم وجود مستخدم بالآيدي الجديد
+                c.execute("SELECT * FROM users WHERE user_id = ?", (new_id,))
+                if c.fetchone():
+                    send_msg(chat_id, "❌ الآيدي الجديد موجود مسبقاً")
+                    del user_states[user_id]
+                    return
+                
+                # نقل جميع البيانات
+                # 1. نسخ بيانات المستخدم
+                c.execute("UPDATE users SET user_id = ? WHERE user_id = ?", (new_id, old_id))
+                
+                # 2. تحديث الطلبات
+                c.execute("UPDATE orders SET user_id = ? WHERE user_id = ?", (new_id, old_id))
+                
+                # 3. تحديث الدعوات
+                c.execute("UPDATE users SET invited_by = ? WHERE invited_by = ?", (new_id, old_id))
+                
+                conn.commit()
+                send_msg(chat_id, f"✅ تم تغيير آيدي المستخدم من {old_id} إلى {new_id}")
+                send_msg(new_id, f"🔄 تم تغيير آيدي حسابك إلى {new_id}")
+                del user_states[user_id]
+            except:
+                send_msg(chat_id, "❌ حدث خطأ في تغيير الآيدي")
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'change_reward':
+            try:
+                new_reward = float(text)
+                if new_reward < 0:
+                    send_msg(chat_id, "❌ المبلغ يجب أن يكون موجباً")
+                else:
+                    c.execute("UPDATE settings SET value = ? WHERE key = 'invite_reward'", (str(new_reward),))
+                    conn.commit()
+                    send_msg(chat_id, f"✅ تم تغيير مكافأة الدعوة إلى {new_reward} USD")
+                del user_states[user_id]
+            except:
+                send_msg(chat_id, "❌ مبلغ غير صحيح")
+                del user_states[user_id]
+            return
+        # ===== نهاية التعديلات الجديدة =====
     
     if text == '/start':
         # التحقق من كود الدعوة
@@ -513,7 +587,14 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'invite':
         c.execute("SELECT invite_code FROM users WHERE user_id = ?", (user_id,))
         code = c.fetchone()[0]
-        link = f"https://t.me/{SUPPORT_USERNAME}?start={code}"
+        
+        # ===== التعديل: رابط الدعوة الجديد =====
+        # إنشاء رابط على شكل: https://t.me/Flashback70bot?start=CODE_USERID_RANDOM
+        bot_username = get_setting('bot_username') or BOT_USERNAME
+        user_code = generate_user_code()
+        link = f"https://t.me/{bot_username}?start={code}_{user_id}_{user_code}"
+        # ===== نهاية التعديل =====
+        
         reward = get_setting('invite_reward')
         
         text = f"""👥 <b>دعوة أصدقاء</b>
@@ -764,15 +845,17 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'settings_menu':
         maint = get_setting('maintenance')
         reward = get_setting('invite_reward')
+        bot_user = get_setting('bot_username')
         
         text = f"""⚙️ <b>إعدادات البوت</b>
 
 🔧 الصيانة: {'✅ مفعل' if maint == 'true' else '❌ معطل'}
-💰 مكافأة الدعوة: {reward} USD"""
+💰 مكافأة الدعوة: {reward} USD
+🤖 يوزر البوت: @{bot_user}"""
         
         buttons = [
             [{'text': '🔧 تبديل الصيانة', 'callback_data': 'toggle_maint'}, {'text': '💰 تغيير المكافأة', 'callback_data': 'change_reward'}],
-            [{'text': '🔙 رجوع', 'callback_data': 'admin'}]
+            [{'text': '🤖 تغيير يوزر البوت', 'callback_data': 'change_bot_user'}, {'text': '🔙 رجوع', 'callback_data': 'admin'}]
         ]
         send_msg(chat_id, text, buttons)
     
@@ -786,48 +869,120 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'change_reward':
         user_states[user_id] = {'type': 'change_reward'}
         send_msg(chat_id, "💰 أرسل المبلغ الجديد:")
+    
+    elif data == 'change_bot_user':
+        user_states[user_id] = {'type': 'change_bot_user'}
+        send_msg(chat_id, "🤖 أرسل يوزر البوت الجديد (بدون @):")
+    
+    # ===== التعديلات الجديدة =====
+    elif data == 'change_user_id':
+        user_states[user_id] = {'type': 'change_user_id'}
+        send_msg(chat_id, "🔁 أرسل الآيدي القديم للمستخدم:")
+    # ===== نهاية التعديلات الجديدة =====
 
-# البولينغ الرئيسي
-print("🚀 البوت يعمل على Render كـ Background Worker...")
-print("👑 المدير:", ADMIN_ID)
-print("📞 الدعم:", SUPPORT_USERNAME)
+# ===== حل مشكلة Render =====
+def run_background_worker():
+    """تشغيل البوت كـ Background Worker"""
+    print("🚀 البوت يعمل على Render كـ Background Worker...")
+    print(f"👑 المدير: {ADMIN_ID}")
+    print(f"📞 الدعم: @{SUPPORT_USERNAME}")
+    print(f"🤖 البوت: @{BOT_USERNAME}")
+    
+    offset = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+            params = {'offset': offset, 'timeout': 30}
+            response = requests.get(url, params=params, timeout=35)
+            
+            if response.status_code == 200:
+                updates = response.json()
+                if updates.get('ok'):
+                    for update in updates['result']:
+                        offset = update['update_id'] + 1
+                        
+                        if 'message' in update:
+                            msg = update['message']
+                            chat_id = msg['chat']['id']
+                            user_id = msg['from']['id']
+                            username = msg['from'].get('username', '')
+                            
+                            if 'text' in msg:
+                                text = msg['text']
+                                handle_message(chat_id, user_id, text)
+                        
+                        elif 'callback_query' in update:
+                            query = update['callback_query']
+                            chat_id = query['message']['chat']['id']
+                            user_id = query['from']['id']
+                            data = query['data']
+                            
+                            try:
+                                handle_callback(chat_id, user_id, data)
+                            except Exception as e:
+                                print(f"⚠️ خطأ في الكال باك: {e}")
+            
+            time.sleep(1)
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في البولينغ: {e}")
+            time.sleep(5)
 
-offset = 0
-while True:
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-        params = {'offset': offset, 'timeout': 30}
-        response = requests.get(url, params=params, timeout=35)
+# ===== الإضافة: خيار تشغيل كـ Web Service =====
+def run_web_service():
+    """تشغيل البوت كـ Web Service"""
+    from flask import Flask, request
+    import threading
+    
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def home():
+        return "🤖 البوت يعمل على Render كـ Web Service"
+    
+    @app.route(f'/{TOKEN}', methods=['POST'])
+    def webhook():
+        update = request.json
+        if update:
+            if 'message' in update:
+                msg = update['message']
+                chat_id = msg['chat']['id']
+                user_id = msg['from']['id']
+                
+                if 'text' in msg:
+                    text = msg['text']
+                    handle_message(chat_id, user_id, text)
+            
+            elif 'callback_query' in update:
+                query = update['callback_query']
+                chat_id = query['message']['chat']['id']
+                user_id = query['from']['id']
+                data = query['data']
+                
+                try:
+                    handle_callback(chat_id, user_id, data)
+                except:
+                    pass
         
-        if response.status_code == 200:
-            updates = response.json()
-            if updates.get('ok'):
-                for update in updates['result']:
-                    offset = update['update_id'] + 1
-                    
-                    if 'message' in update:
-                        msg = update['message']
-                        chat_id = msg['chat']['id']
-                        user_id = msg['from']['id']
-                        username = msg['from'].get('username', '')
-                        
-                        if 'text' in msg:
-                            text = msg['text']
-                            handle_message(chat_id, user_id, text)
-                    
-                    elif 'callback_query' in update:
-                        query = update['callback_query']
-                        chat_id = query['message']['chat']['id']
-                        user_id = query['from']['id']
-                        data = query['data']
-                        
-                        try:
-                            handle_callback(chat_id, user_id, data)
-                        except:
-                            pass
-        
-        time.sleep(1)
-        
-    except Exception as e:
-        print(f"⚠️ خطأ: {e}")
-        time.sleep(5)
+        return 'OK'
+    
+    # تشغيل البولينغ في خيط منفصل
+    threading.Thread(target=run_background_worker, daemon=True).start()
+    
+    # تشغيل Flask
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# التشغيل الرئيسي
+if __name__ == '__main__':
+    import os
+    
+    # اختيار وضع التشغيل حسب البيئة
+    if os.environ.get('RENDER', '').lower() == 'true':
+        # على Render - استخدم Web Service
+        print("🌐 تشغيل كـ Web Service...")
+        run_web_service()
+    else:
+        # محلي أو Background Worker
+        print("⚙️ تشغيل كـ Background Worker...")
+        run_background_worker()
