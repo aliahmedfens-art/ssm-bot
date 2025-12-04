@@ -5,132 +5,92 @@ import json
 import uuid
 import random
 import string
-import os
 
+# تأكد من تغيير الآيدي هذا إلى آيديك الحقيقي
 TOKEN = "8436742877:AAHmlmOKY2iQCGoOt004ruq09tZGderDGMQ"
-ADMIN_ID = 6130994941
+ADMIN_ID = 8462737195  # غير هذا الرقم إلى آيديك الحقيقي
 SUPPORT_USERNAME = "Allawi04"
 BOT_USERNAME = "Flashback70bot"
 
-DB_PATH = 'bot.db'
+# قاعدة البيانات
+conn = sqlite3.connect('bot.db', check_same_thread=False)
+c = conn.cursor()
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    c = conn.cursor()
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        balance REAL DEFAULT 0,
-        is_admin INTEGER DEFAULT 0,
-        is_banned INTEGER DEFAULT 0,
-        is_restricted INTEGER DEFAULT 0,
-        invited_by INTEGER DEFAULT 0,
-        invite_code TEXT UNIQUE,
-        total_invites INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS services (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category_id INTEGER,
-        name TEXT,
-        price_per_k REAL,
-        min_order INTEGER DEFAULT 100,
-        max_order INTEGER DEFAULT 10000,
-        description TEXT DEFAULT ''
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        service_id INTEGER,
-        quantity INTEGER,
-        total_price REAL,
-        link TEXT,
-        status TEXT DEFAULT 'pending',
-        admin_note TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS forced_channels (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id TEXT,
-        channel_username TEXT,
-        channel_url TEXT
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER,
-        user_id INTEGER,
-        invoice_data TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    
-    default_settings = [
-        ('maintenance', 'false'),
-        ('maintenance_msg', 'البوت تحت الصيانة'),
-        ('invite_reward', '0.10'),
-        ('invite_enabled', 'true'),
-        ('force_subscribe', 'false'),
-        ('bot_username', BOT_USERNAME)
-    ]
-    
-    for key, value in default_settings:
-        c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    
-    c.execute("SELECT * FROM users WHERE user_id = ?", (ADMIN_ID,))
-    if not c.fetchone():
-        c.execute("INSERT INTO users (user_id, username, balance, is_admin, invite_code) VALUES (?, ?, ?, ?, ?)",
-                 (ADMIN_ID, "المدير", 1000, 1, 'ADMIN'))
-    
-    c.execute("SELECT COUNT(*) FROM categories")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO categories (name) VALUES ('متابعات')")
-        c.execute("INSERT INTO categories (name) VALUES ('لايكات')")
-        c.execute("INSERT INTO categories (name) VALUES ('مشاهدات')")
-    
-    c.execute("SELECT COUNT(*) FROM services")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'متابعين انستغرام', 0.5, 100, 10000)")
-        c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'متابعين تيك توك', 0.4, 100, 5000)")
-        c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (2, 'لايكات انستغرام', 0.3, 100, 10000)")
-        c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (3, 'مشاهدات يوتيوب', 0.2, 500, 50000)")
-    
-    conn.commit()
-    conn.close()
+# إنشاء الجداول
+c.execute('''CREATE TABLE IF NOT EXISTS users 
+             (user_id INTEGER PRIMARY KEY, username TEXT, 
+             balance REAL DEFAULT 0, is_admin INTEGER DEFAULT 0, 
+             is_banned INTEGER DEFAULT 0, is_restricted INTEGER DEFAULT 0,
+             invited_by INTEGER DEFAULT 0, invite_code TEXT UNIQUE,
+             total_invites INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-init_db()
+c.execute('''CREATE TABLE IF NOT EXISTS categories 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)''')
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    return conn
+c.execute('''CREATE TABLE IF NOT EXISTS services 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER, name TEXT, 
+             price_per_k REAL, min_order INTEGER DEFAULT 100, 
+             max_order INTEGER DEFAULT 10000, description TEXT DEFAULT '')''')
 
+c.execute('''CREATE TABLE IF NOT EXISTS orders 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, service_id INTEGER,
+             quantity INTEGER, total_price REAL, link TEXT, status TEXT DEFAULT 'pending',
+             admin_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS forced_channels 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             channel_id TEXT, channel_username TEXT, channel_url TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS settings 
+             (key TEXT PRIMARY KEY, value TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS invoices 
+             (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER,
+             user_id INTEGER, invoice_data TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+# إعدادات افتراضية
+default_settings = [
+    ('maintenance', 'false'),
+    ('maintenance_msg', 'البوت تحت الصيانة'),
+    ('invite_reward', '0.10'),
+    ('invite_enabled', 'true'),
+    ('force_subscribe', 'false'),
+    ('bot_username', BOT_USERNAME)
+]
+
+for key, value in default_settings:
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+# تأكد من إضافة آيديك الحقيقي كمدير
+c.execute("DELETE FROM users WHERE user_id = ?", (ADMIN_ID,))
+c.execute("INSERT OR IGNORE INTO users (user_id, username, balance, is_admin, invite_code) VALUES (?, ?, ?, ?, ?)",
+          (ADMIN_ID, "المدير", 1000, 1, 'ADMIN'))
+
+# إضافة خدمات تجريبية
+c.execute("SELECT COUNT(*) FROM categories")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO categories (name) VALUES ('متابعات')")
+    c.execute("INSERT INTO categories (name) VALUES ('لايكات')")
+    c.execute("INSERT INTO categories (name) VALUES ('مشاهدات')")
+
+c.execute("SELECT COUNT(*) FROM services")
+if c.fetchone()[0] == 0:
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'متابعين انستغرام', 0.5, 100, 10000)")
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (1, 'متابعين تيك توك', 0.4, 100, 5000)")
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (2, 'لايكات انستغرام', 0.3, 100, 10000)")
+    c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (3, 'مشاهدات يوتيوب', 0.2, 500, 50000)")
+
+conn.commit()
+
+# وظائف مساعدة
 def get_setting(key):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT value FROM settings WHERE key = ?", (key,))
     result = c.fetchone()
-    conn.close()
     return result[0] if result else None
 
 def set_setting(key, value):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
-    conn.close()
 
 def send_msg(chat_id, text, buttons=None):
     try:
@@ -146,11 +106,8 @@ def check_channels(user_id):
     if get_setting('force_subscribe') != 'true':
         return True, None
     
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT channel_id, channel_username FROM forced_channels")
     channels = c.fetchall()
-    conn.close()
     
     for channel_id, channel_username in channels:
         try:
@@ -170,17 +127,11 @@ def check_channels(user_id):
     return True, None
 
 def get_user_balance(user_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     result = c.fetchone()
-    conn.close()
     return result[0] if result else 0
 
 def create_invoice(order_id, user_id, service_name, quantity, price_per_k, total_price, link):
-    conn = get_db()
-    c = conn.cursor()
-    
     c.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
     user_result = c.fetchone()
     username = user_result[0] if user_result else "مستخدم"
@@ -223,26 +174,21 @@ def create_invoice(order_id, user_id, service_name, quantity, price_per_k, total
     c.execute("INSERT INTO invoices (order_id, user_id, invoice_data) VALUES (?, ?, ?)",
              (order_id, user_id, json.dumps(invoice_data)))
     conn.commit()
-    conn.close()
     
     return invoice_text
 
 user_states = {}
 
 def main_menu(chat_id, user_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT is_banned, is_restricted FROM users WHERE user_id = ?", (user_id,))
     user_status = c.fetchone()
     
     if user_status:
         if user_status[0] == 1:
             send_msg(chat_id, "🚫 تم حظرك من البوت")
-            conn.close()
             return
         if user_status[1] == 1:
             send_msg(chat_id, "⛔ حسابك مقيد")
-            conn.close()
             return
     
     subscribed, channel = check_channels(user_id)
@@ -252,12 +198,10 @@ def main_menu(chat_id, user_id):
             {'text': '✅ تحقق', 'callback_data': 'check_sub'}
         ]]
         send_msg(chat_id, f"📢 يجب الاشتراك في @{channel} أولاً", buttons)
-        conn.close()
         return
     
     c.execute("SELECT username, balance, is_admin FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
-    conn.close()
     
     username = user[0] if user else "مستخدم"
     balance = user[1] if user else 0
@@ -283,11 +227,8 @@ def main_menu(chat_id, user_id):
     send_msg(chat_id, text, buttons)
 
 def services_menu(chat_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT id, name FROM categories")
     cats = c.fetchall()
-    conn.close()
     
     if not cats:
         send_msg(chat_id, "📭 لا توجد أقسام")
@@ -301,11 +242,8 @@ def services_menu(chat_id):
     send_msg(chat_id, "🛍️ اختر القسم:", buttons)
 
 def category_menu(chat_id, cat_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT id, name, price_per_k FROM services WHERE category_id = ?", (cat_id,))
     services = c.fetchall()
-    conn.close()
     
     if not services:
         send_msg(chat_id, "📭 لا توجد خدمات في هذا القسم")
@@ -319,11 +257,8 @@ def category_menu(chat_id, cat_id):
     send_msg(chat_id, "📦 اختر الخدمة:", buttons)
 
 def service_menu(chat_id, user_id, service_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT name, price_per_k, min_order, max_order FROM services WHERE id = ?", (service_id,))
     serv = c.fetchone()
-    conn.close()
     
     if not serv:
         send_msg(chat_id, "❌ الخدمة غير موجودة")
@@ -345,14 +280,11 @@ def admin_panel(chat_id):
     send_msg(chat_id, "👑 <b>لوحة تحكم المدير</b>", buttons)
 
 def ban_management_menu(chat_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
     total_banned = c.fetchone()[0]
     
     c.execute("SELECT user_id, username, balance FROM users WHERE is_banned = 1 LIMIT 10")
     banned_users = c.fetchall()
-    conn.close()
     
     text = f"🚫 <b>إدارة المستخدمين المحظورين</b>\n\n"
     text += f"👥 عدد المحظورين: {total_banned}\n━━━━━━\n"
@@ -381,14 +313,11 @@ def ban_management_menu(chat_id):
     send_msg(chat_id, text, buttons)
 
 def users_management_menu(chat_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
     total_users = c.fetchone()[0]
     
     c.execute("SELECT user_id, username, balance, is_banned, is_restricted, is_admin FROM users LIMIT 10")
     users = c.fetchall()
-    conn.close()
     
     text = f"👥 <b>إدارة المستخدمين</b>\n\n"
     text += f"📊 العدد الكلي: {total_users}\n━━━━━━\n"
@@ -427,11 +356,8 @@ def users_management_menu(chat_id):
     send_msg(chat_id, text, buttons)
 
 def invite_system_menu(chat_id, user_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT invite_code, total_invites FROM users WHERE user_id = ?", (user_id,))
     user_data = c.fetchone()
-    conn.close()
     
     if not user_data:
         send_msg(chat_id, "❌ المستخدم غير موجود")
@@ -463,11 +389,8 @@ def invite_system_menu(chat_id, user_id):
     send_msg(chat_id, text, buttons)
 
 def invoice_system_menu(chat_id):
-    conn = get_db()
-    c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM invoices")
     total_invoices = c.fetchone()[0]
-    conn.close()
     
     text = f"🧾 <b>نظام الفواتير</b>\n\n"
     text += f"📊 إجمالي الفواتير: {total_invoices}\n\n"
@@ -492,8 +415,6 @@ def handle_message(chat_id, user_id, text):
         if len(parts) > 1:
             invite_code = parts[1].split('_')[0]
             
-            conn = get_db()
-            c = conn.cursor()
             c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
             inviter = c.fetchone()
             
@@ -504,17 +425,12 @@ def handle_message(chat_id, user_id, text):
                 c.execute("UPDATE users SET invited_by = ? WHERE user_id = ?", (inviter[0], user_id))
                 conn.commit()
                 send_msg(inviter[0], f"🎉 مكافأة دعوة {reward} دولار! انضم مستخدم جديد.")
-            
-            conn.close()
         
-        conn = get_db()
-        c = conn.cursor()
         c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         if not c.fetchone():
             invite_code = str(uuid.uuid4())[:8]
             c.execute("INSERT INTO users (user_id, invite_code) VALUES (?, ?)", (user_id, invite_code))
             conn.commit()
-        conn.close()
         
         main_menu(chat_id, user_id)
         return
@@ -528,11 +444,8 @@ def handle_message(chat_id, user_id, text):
         
         if state.get('type') == 'order_qty':
             service_id = state['service_id']
-            conn = get_db()
-            c = conn.cursor()
             c.execute("SELECT name, price_per_k, min_order, max_order FROM services WHERE id = ?", (service_id,))
             serv = c.fetchone()
-            conn.close()
             
             if serv:
                 name, price, min_q, max_q = serv
@@ -559,9 +472,6 @@ def handle_message(chat_id, user_id, text):
                 del user_states[user_id]
                 return
             
-            conn = get_db()
-            c = conn.cursor()
-            
             c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
             balance = c.fetchone()[0]
             
@@ -578,7 +488,6 @@ def handle_message(chat_id, user_id, text):
                 price_per_k = service_info[1] if service_info else 0
                 
                 conn.commit()
-                conn.close()
                 
                 invoice_text = create_invoice(order_id, user_id, service_name, quantity, price_per_k, total, link)
                 
@@ -607,7 +516,6 @@ def handle_message(chat_id, user_id, text):
                 
             else:
                 send_msg(chat_id, f"❌ رصيد غير كافي\nرصيدك: {balance:,.2f} دولار\nالمطلوب: {total:,.2f} دولار")
-                conn.close()
             
             if user_id in user_states:
                 del user_states[user_id]
@@ -616,11 +524,8 @@ def handle_message(chat_id, user_id, text):
         elif state.get('type') == 'ban_by_id':
             if text.isdigit():
                 target_id = int(text)
-                conn = get_db()
-                c = conn.cursor()
                 c.execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,))
                 conn.commit()
-                conn.close()
                 send_msg(chat_id, f"✅ تم حظر المستخدم {target_id}")
                 send_msg(target_id, "🚫 تم حظرك من البوت")
             else:
@@ -646,11 +551,8 @@ def handle_message(chat_id, user_id, text):
                 amount = float(text)
                 target_id = state['target_id']
                 
-                conn = get_db()
-                c = conn.cursor()
                 c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_id))
                 conn.commit()
-                conn.close()
                 
                 send_msg(chat_id, f"✅ تم شحن {amount:,.2f} دولار للمستخدم {target_id}")
                 send_msg(target_id, f"🎉 تم شحن رصيدك!\nالمبلغ: {amount:,.2f} دولار")
@@ -711,8 +613,6 @@ def handle_callback(chat_id, user_id, data):
         invite_system_menu(chat_id, user_id)
     
     elif data == 'my_orders':
-        conn = get_db()
-        c = conn.cursor()
         c.execute("""
             SELECT o.id, s.name, o.quantity, o.total_price, o.status 
             FROM orders o 
@@ -721,7 +621,6 @@ def handle_callback(chat_id, user_id, data):
             ORDER BY o.id DESC LIMIT 10
         """, (user_id,))
         orders = c.fetchall()
-        conn.close()
         
         if orders:
             text = "📋 <b>طلباتك الأخيرة</b>\n\n"
@@ -738,11 +637,8 @@ def handle_callback(chat_id, user_id, data):
         send_msg(chat_id, f"📞 الدعم: @{SUPPORT_USERNAME}\n🆔 آيديك: {user_id}")
     
     elif data == 'admin':
-        conn = get_db()
-        c = conn.cursor()
         c.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
         user = c.fetchone()
-        conn.close()
         
         if user and user[0] == 1:
             admin_panel(chat_id)
@@ -750,16 +646,11 @@ def handle_callback(chat_id, user_id, data):
             send_msg(chat_id, "🚫 ليس لديك صلاحية")
     
     elif data == 'stats':
-        conn = get_db()
-        c = conn.cursor()
-        
         users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         banned = c.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1").fetchone()[0]
         admins = c.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
         balance = c.execute("SELECT SUM(balance) FROM users").fetchone()[0] or 0
         orders = c.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-        
-        conn.close()
         
         text = f"""📊 <b>إحصائيات البوت</b>
 
@@ -783,11 +674,8 @@ def handle_callback(chat_id, user_id, data):
     
     elif data.startswith('unban_'):
         target_id = int(data.split('_')[1])
-        conn = get_db()
-        c = conn.cursor()
         c.execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,))
         conn.commit()
-        conn.close()
         send_msg(chat_id, f"✅ تم فك حظر المستخدم {target_id}")
         send_msg(target_id, "✅ تم فك حظرك من البوت")
         ban_management_menu(chat_id)
