@@ -8,7 +8,7 @@ import string
 
 # إعدادات البوت
 TOKEN = "8436742877:AAHmlmOKY2iQCGoOt004ruq09tZGderDGMQ"
-ADMIN_ID = 8462737195
+ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
 BOT_USERNAME = "Flashback70bot"  # تم إضافة يوزر البوت هنا
 
