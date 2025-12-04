@@ -54,6 +54,11 @@ def init_database():
     c.execute('''CREATE TABLE IF NOT EXISTS settings 
                  (key TEXT PRIMARY KEY, value TEXT)''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS invoices 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER,
+                 user_id INTEGER, invoice_data TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY(order_id) REFERENCES orders(id))''')
+
     default_settings = [
         ('maintenance', 'false'),
         ('maintenance_msg', 'البوت تحت الصيانة'),
@@ -152,6 +157,118 @@ def get_user_balance(user_id):
     result = c.fetchone()
     conn.close()
     return result[0] if result else 0
+
+def create_invoice(order_id, user_id, service_name, quantity, price_per_k, total_price, link):
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    c.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+    user_result = c.fetchone()
+    username = user_result[0] if user_result else "مستخدم"
+    
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H:%M:%S")
+    
+    invoice_data = {
+        'invoice_id': order_id,
+        'user_id': user_id,
+        'username': username,
+        'service_name': service_name,
+        'quantity': quantity,
+        'price_per_k': price_per_k,
+        'total_price': total_price,
+        'link': link,
+        'date': date_str,
+        'time': time_str,
+        'status': 'مدفوعة'
+    }
+    
+    invoice_text = f"""
+══════════════════════════════════
+🛒 *فاتورة الشراء* #INV-{order_id:06d}
+══════════════════════════════════
+
+📋 *معلومات الفاتورة:*
+┣ رقم الفاتورة: #{order_id:06d}
+┣ التاريخ: {date_str}
+┗ الوقت: {time_str}
+
+👤 *معلومات العميل:*
+┣ الآيدي: {user_id}
+┣ اليوزر: @{username}
+┗ الرصيد: {get_user_balance(user_id):,.2f} دولار
+
+📦 *تفاصيل الطلب:*
+┣ الخدمة: {service_name}
+┣ الكمية: {quantity:,}
+┣ السعر: {price_per_k} دولار/1000
+┗ المجموع: {total_price:,.2f} دولار
+
+🔗 *الرابط المطلوب:*
+{link[:100]}{'...' if len(link) > 100 else ''}
+
+══════════════════════════════════
+💰 *الإجمالي النهائي:* {total_price:,.2f} دولار
+══════════════════════════════════
+
+📌 *ملاحظات:*
+• الرجاء الاحتفاظ برقم الفاتورة للاستفسار
+• للاستفسارات راسل الدعم: @{SUPPORT_USERNAME}
+• شكراً لثقتك بنا 💙
+
+══════════════════════════════════
+    """
+    
+    c.execute("INSERT INTO invoices (order_id, user_id, invoice_data) VALUES (?, ?, ?)",
+              (order_id, user_id, json.dumps(invoice_data)))
+    conn.commit()
+    conn.close()
+    
+    return invoice_text
+
+def view_invoice(order_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT invoice_data FROM invoices WHERE order_id = ?", (order_id,))
+    result = c.fetchone()
+    conn.close()
+    
+    if not result:
+        return None
+    
+    invoice_data = json.loads(result[0])
+    
+    invoice_text = f"""
+══════════════════════════════════
+🧾 *فاتورة الشراء* #INV-{order_id:06d}
+══════════════════════════════════
+
+📋 *معلومات الفاتورة:*
+┣ رقم الفاتورة: #{order_id:06d}
+┣ التاريخ: {invoice_data['date']}
+┗ الوقت: {invoice_data['time']}
+
+👤 *معلومات العميل:*
+┣ الآيدي: {invoice_data['user_id']}
+┣ اليوزر: @{invoice_data['username']}
+┗ الحالة: {invoice_data['status']}
+
+📦 *تفاصيل الطلب:*
+┣ الخدمة: {invoice_data['service_name']}
+┣ الكمية: {invoice_data['quantity']:,}
+┣ السعر: {invoice_data['price_per_k']} دولار/1000
+┗ المجموع: {invoice_data['total_price']:,.2f} دولار
+
+🔗 *الرابط المطلوب:*
+{invoice_data['link'][:100]}{'...' if len(invoice_data['link']) > 100 else ''}
+
+══════════════════════════════════
+💰 *الإجمالي النهائي:* {invoice_data['total_price']:,.2f} دولار
+══════════════════════════════════
+    """
+    
+    return invoice_text
 
 user_states = {}
 
@@ -261,8 +378,8 @@ def admin_panel(chat_id):
         [{'text': '📊 الإحصائيات', 'callback_data': 'stats'}, {'text': '👥 إدارة المستخدمين', 'callback_data': 'users_management'}],
         [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن الرصيد', 'callback_data': 'admin_charge'}],
         [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_management'}, {'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}],
-        [{'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}, {'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}],
-        [{'text': '🔙 الرئيسية', 'callback_data': 'main'}]
+        [{'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}, {'text': '🧾 نظام الفواتير', 'callback_data': 'invoice_system'}],
+        [{'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}, {'text': '🔙 الرئيسية', 'callback_data': 'main'}]
     ]
     send_msg(chat_id, "👑 <b>لوحة تحكم المدير</b>", buttons)
 
@@ -407,6 +524,55 @@ def invite_system_menu(chat_id, user_id):
     
     send_msg(chat_id, text, buttons)
 
+def invoice_system_menu(chat_id, page=0):
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    c.execute("SELECT COUNT(*) FROM invoices")
+    total_invoices = c.fetchone()[0]
+    
+    c.execute("""
+        SELECT i.id, i.order_id, i.user_id, i.created_at, o.total_price 
+        FROM invoices i 
+        LEFT JOIN orders o ON i.order_id = o.id 
+        ORDER BY i.id DESC LIMIT 10 OFFSET ?
+    """, (page * 10,))
+    invoices = c.fetchall()
+    conn.close()
+    
+    text = f"🧾 <b>نظام الفواتير</b>\n\n"
+    text += f"📊 إجمالي الفواتير: {total_invoices}\n━━━━━━━━━━━━\n"
+    
+    if invoices:
+        for inv_id, order_id, user_id, created_at, total_price in invoices:
+            text += f"🧾 #INV-{order_id:06d}\n"
+            text += f"👤 {user_id} | 💰 {total_price or 0:,.2f} دولار\n"
+            text += f"📅 {created_at[:10]}\n━━━━━━\n"
+    else:
+        text += "📭 لا توجد فواتير\n"
+    
+    buttons = []
+    
+    for inv_id, order_id, user_id, created_at, total_price in invoices:
+        buttons.append([
+            {'text': f'🧾 #{order_id}', 'callback_data': f'view_invoice_{order_id}'},
+            {'text': f'📤 إرسال', 'callback_data': f'send_invoice_{order_id}'}
+        ])
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append({'text': '⬅️ السابق', 'callback_data': f'invoicepage_{page-1}'})
+    if len(invoices) == 10:
+        nav_buttons.append({'text': '➡️ التالي', 'callback_data': f'invoicepage_{page+1}'})
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    buttons.append([{'text': '🔍 بحث عن فاتورة', 'callback_data': 'search_invoice'}])
+    buttons.append([{'text': '🔙 رجوع', 'callback_data': 'admin'}])
+    
+    send_msg(chat_id, text, buttons)
+
 def handle_message(chat_id, user_id, text):
     if get_setting('maintenance') == 'true' and user_id != ADMIN_ID:
         send_msg(chat_id, get_setting('maintenance_msg'))
@@ -501,9 +667,12 @@ def handle_message(chat_id, user_id, text):
                 c.execute("SELECT name, price_per_k FROM services WHERE id = ?", (service_id,))
                 service_info = c.fetchone()
                 service_name = service_info[0] if service_info else "خدمة"
+                price_per_k = service_info[1] if service_info else 0
                 
                 conn.commit()
                 conn.close()
+                
+                invoice_text = create_invoice(order_id, user_id, service_name, quantity, price_per_k, total, link)
                 
                 send_msg(chat_id, f"""✅ تم إرسال الطلب #{order_id} بنجاح!
 
@@ -513,29 +682,7 @@ def handle_message(chat_id, user_id, text):
 
 📊 رصيدك الجديد: {balance - total:,.2f} دولار""")
                 
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H:%M")
-                
-                invoice_text = f"""
-══════════════════════════
-🛒 فاتورة الشراء #{order_id}
-══════════════════════════
-
-📅 التاريخ: {date_str}
-⏰ الوقت: {time_str}
-
-👤 العميل: {user_id}
-📦 الخدمة: {service_name}
-🔢 الكمية: {quantity:,}
-💰 الإجمالي: {total:,.2f} دولار
-🔗 الرابط: {link[:50]}...
-
-══════════════════════════
-شكراً لشرائك! 💙
-══════════════════════════
-                """
-                
+                time.sleep(1)
                 send_msg(chat_id, invoice_text)
                 
                 admin_msg = f"""🆕 طلب جديد #{order_id}
@@ -606,6 +753,84 @@ def handle_message(chat_id, user_id, text):
                 send_msg(target_id, f"🎉 تم شحن رصيدك!\nالمبلغ: {amount:,.2f} دولار")
             except:
                 send_msg(chat_id, "❌ مبلغ غير صحيح")
+            
+            if user_id in user_states:
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'send_to_all_amount':
+            try:
+                amount = float(text)
+                user_states[user_id] = {'type': 'send_to_all_msg', 'amount': amount}
+                send_msg(chat_id, "📝 أرسل الرسالة المراد إرسالها مع المبلغ:")
+            except:
+                send_msg(chat_id, "❌ مبلغ غير صحيح")
+                if user_id in user_states:
+                    del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'send_to_all_msg':
+            message = text
+            amount = user_states[user_id]['amount']
+            
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM users WHERE is_banned = 0")
+            users = c.fetchall()
+            
+            count = 0
+            for u in users:
+                user_id_target = u[0]
+                c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id_target))
+                send_msg(user_id_target, f"🎁 {message}\n💰 المكافأة: {amount:,.2f} دولار")
+                count += 1
+                time.sleep(0.1)
+            
+            conn.commit()
+            conn.close()
+            send_msg(chat_id, f"✅ تم إرسال {amount:,.2f} دولار لـ {count} مستخدم")
+            
+            if user_id in user_states:
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'send_user_message':
+            target_id = state['target_id']
+            send_msg(target_id, f"📩 رسالة من الإدارة:\n\n{text}")
+            send_msg(chat_id, f"✅ تم إرسال الرسالة للمستخدم {target_id}")
+            
+            if user_id in user_states:
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'change_reward':
+            try:
+                new_reward = float(text)
+                set_setting('invite_reward', str(new_reward))
+                send_msg(chat_id, f"✅ تم تغيير مكافأة الدعوة إلى {new_reward} دولار")
+            except:
+                send_msg(chat_id, "❌ مبلغ غير صحيح")
+            
+            if user_id in user_states:
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'search_users':
+            users_management_menu(chat_id, search_query=text)
+            if user_id in user_states:
+                del user_states[user_id]
+            return
+        
+        elif state.get('type') == 'search_invoice':
+            if text.isdigit():
+                order_id = int(text)
+                invoice_text = view_invoice(order_id)
+                if invoice_text:
+                    send_msg(chat_id, invoice_text)
+                else:
+                    send_msg(chat_id, "❌ فاتورة غير موجودة")
+            else:
+                send_msg(chat_id, "❌ رقم فاتورة غير صحيح")
             
             if user_id in user_states:
                 del user_states[user_id]
@@ -736,8 +961,16 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'users_management':
         users_management_menu(chat_id)
     
+    elif data.startswith('userspage_'):
+        page = int(data.split('_')[1])
+        users_management_menu(chat_id, page)
+    
     elif data == 'ban_management':
         ban_management_menu(chat_id)
+    
+    elif data.startswith('banpage_'):
+        page = int(data.split('_')[1])
+        ban_management_menu(chat_id, page)
     
     elif data == 'ban_by_id':
         user_states[user_id] = {'type': 'ban_by_id'}
@@ -753,6 +986,46 @@ def handle_callback(chat_id, user_id, data):
         send_msg(chat_id, f"✅ تم فك حظر المستخدم {target_id}")
         send_msg(target_id, "✅ تم فك حظرك من البوت")
         ban_management_menu(chat_id)
+    
+    elif data.startswith('restrict_'):
+        target_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET is_restricted = 1 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        send_msg(chat_id, f"✅ تم تقييد المستخدم {target_id}")
+        send_msg(target_id, "⛔ تم تقييد حسابك")
+    
+    elif data.startswith('unrestrict_'):
+        target_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET is_restricted = 0 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        send_msg(chat_id, f"✅ تم فك تقييد المستخدم {target_id}")
+        send_msg(target_id, "✅ تم فك تقييد حسابك")
+    
+    elif data.startswith('promote_'):
+        target_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        send_msg(chat_id, f"✅ تم رفع المستخدم {target_id} كمشرف")
+        send_msg(target_id, "👑 تم رفعك كمشرف")
+    
+    elif data.startswith('demote_'):
+        target_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        send_msg(chat_id, f"✅ تم خفض المستخدم {target_id} لمستخدم عادي")
+        send_msg(target_id, "👤 تم خفض صلاحياتك")
     
     elif data.startswith('charge_'):
         target_id = int(data.split('_')[1])
@@ -795,6 +1068,91 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'change_reward':
         user_states[user_id] = {'type': 'change_reward'}
         send_msg(chat_id, "💰 أرسل المبلغ الجديد:")
+    
+    elif data == 'invoice_system':
+        invoice_system_menu(chat_id)
+    
+    elif data.startswith('invoicepage_'):
+        page = int(data.split('_')[1])
+        invoice_system_menu(chat_id, page)
+    
+    elif data.startswith('view_invoice_'):
+        order_id = int(data.split('_')[2])
+        invoice_text = view_invoice(order_id)
+        if invoice_text:
+            send_msg(chat_id, invoice_text)
+        else:
+            send_msg(chat_id, "❌ فاتورة غير موجودة")
+    
+    elif data.startswith('send_invoice_'):
+        order_id = int(data.split('_')[2])
+        invoice_text = view_invoice(order_id)
+        if invoice_text:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT user_id FROM invoices WHERE order_id = ?", (order_id,))
+            result = c.fetchone()
+            conn.close()
+            
+            if result:
+                target_user_id = result[0]
+                send_msg(target_user_id, f"📤 *إعادة إرسال الفاتورة*\n\n{invoice_text}")
+                send_msg(chat_id, f"✅ تم إرسال الفاتورة #{order_id} للمستخدم {target_user_id}")
+            else:
+                send_msg(chat_id, "❌ لم يتم العثور على المستخدم")
+        else:
+            send_msg(chat_id, "❌ فاتورة غير موجودة")
+    
+    elif data == 'search_invoice':
+        user_states[user_id] = {'type': 'search_invoice'}
+        send_msg(chat_id, "🔍 أرسل رقم الفاتورة للبحث:")
+    
+    elif data == 'clean_banned':
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("DELETE FROM users WHERE is_banned = 1 AND user_id != ?", (ADMIN_ID,))
+        count = c.rowcount
+        conn.commit()
+        conn.close()
+        send_msg(chat_id, f"✅ تم تنظيف {count} مستخدم محظور")
+        ban_management_menu(chat_id)
+    
+    elif data == 'search_users':
+        user_states[user_id] = {'type': 'search_users'}
+        send_msg(chat_id, "🔍 أرسل آيدي المستخدم أو يوزره للبحث:")
+    
+    elif data.startswith('complete_'):
+        order_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE orders SET status = 'completed' WHERE id = ?", (order_id,))
+        c.execute("SELECT user_id FROM orders WHERE id = ?", (order_id,))
+        result = c.fetchone()
+        conn.commit()
+        conn.close()
+        
+        if result:
+            send_msg(result[0], f"✅ تم إكمال طلبك #{order_id}")
+            send_msg(chat_id, f"✅ تم إكمال الطلب #{order_id}")
+    
+    elif data.startswith('cancel_'):
+        order_id = int(data.split('_')[1])
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT user_id, total_price FROM orders WHERE id = ?", (order_id,))
+        result = c.fetchone()
+        
+        if result:
+            user_id_target, total_price = result
+            c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (total_price, user_id_target))
+            c.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
+            conn.commit()
+            conn.close()
+            
+            send_msg(user_id_target, f"❌ تم إلغاء طلبك #{order_id}\n💰 تم إعادة {total_price:,.2f} دولار لحسابك")
+            send_msg(chat_id, f"❌ تم إلغاء الطلب #{order_id}")
+        else:
+            conn.close()
 
 print("🚀 البوت يعمل...")
 
