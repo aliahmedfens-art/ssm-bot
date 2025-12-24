@@ -7,7 +7,7 @@ import random
 import string
 
 # إعدادات البوت
-TOKEN = "8436742877:AAHmlmOKY2iQCGoOt004ruq09tZGderDGMQ"
+TOKEN = "8436742877:AAGhCfnC9hbW7Sa4gMTroYissoljCjda9Ow"
 ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
 BOT_USERNAME = "Flashback70bot"  # تم إضافة يوزر البوت هنا
