@@ -8,35 +8,35 @@ import string
 from datetime import datetime
 import os
 from fpdf import FPDF
+from flask import Flask, request
+import threading
 
-# إعدادات البوت
+# ==================== إعدادات البوت ====================
 TOKEN = "8436742877:AAGhCfnC9hbW7Sa4gMTroYissoljCjda9Ow"
 ADMIN_ID = 6130994941
 SUPPORT_USERNAME = "Allawi04"
 BOT_USERNAME = "Flashback70bot"
 
-# قاعدة البيانات
+# ==================== قاعدة البيانات ====================
 conn = sqlite3.connect('/tmp/bot.db', check_same_thread=False)
 c = conn.cursor()
 
-# ==================== إنشاء الجداول ====================
+# إنشاء الجداول
 c.execute('''CREATE TABLE IF NOT EXISTS users 
              (user_id INTEGER PRIMARY KEY, username TEXT, 
              balance REAL DEFAULT 0, is_admin INTEGER DEFAULT 0, 
              is_banned INTEGER DEFAULT 0, is_restricted INTEGER DEFAULT 0,
              invited_by INTEGER DEFAULT 0, invite_code TEXT UNIQUE,
              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-             daily_reward_date TEXT DEFAULT '',
-             total_invited INTEGER DEFAULT 0)''')
+             daily_reward_date TEXT DEFAULT '', total_invited INTEGER DEFAULT 0)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS categories 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS services 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER, name TEXT, 
-             price_per_k REAL, min_order INTEGER DEFAULT 100, 
-             max_order INTEGER DEFAULT 10000, description TEXT DEFAULT '',
-             is_active INTEGER DEFAULT 1)''')
+             price_per_k REAL, min_order INTEGER DEFAULT 100, max_order INTEGER DEFAULT 10000,
+             description TEXT DEFAULT '', is_active INTEGER DEFAULT 1)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS orders 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, service_id INTEGER,
@@ -55,33 +55,24 @@ c.execute('''CREATE TABLE IF NOT EXISTS channel_funding
              (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
               channel_link TEXT, channel_username TEXT, channel_id TEXT,
               target_members INTEGER, current_members INTEGER DEFAULT 0,
-              price_per_member REAL, total_cost REAL, paid_amount REAL DEFAULT 0,
-              subscription_reward REAL, status TEXT DEFAULT 'pending',
-              admin_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              price_per_member REAL, total_cost REAL, subscription_reward REAL,
+              status TEXT DEFAULT 'pending', admin_note TEXT DEFAULT '',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               completed_at TIMESTAMP DEFAULT NULL)''')
 
 c.execute('''CREATE TABLE IF NOT EXISTS channel_subscriptions
              (id INTEGER PRIMARY KEY AUTOINCREMENT, funding_id INTEGER,
-              subscriber_id INTEGER, subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-              reward_claimed INTEGER DEFAULT 0)''')
+              subscriber_id INTEGER, subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-# ==================== الإعدادات الافتراضية ====================
+# الإعدادات الافتراضية
 default_settings = [
-    ('maintenance', 'false'),
-    ('maintenance_msg', 'البوت تحت الصيانة'),
-    ('invite_reward', '0.10'),
-    ('invite_enabled', 'true'),
-    ('force_subscribe', 'false'),
-    ('bot_username', BOT_USERNAME),
-    ('daily_reward', '0.05'),
-    ('channel_funding_enabled', 'true'),
-    ('min_funding_members', '100'),
-    ('max_funding_members', '5000'),
-    ('subscription_reward', '0.01'),
-    ('max_channels_per_user', '3'),
-    ('subscription_cooldown', '24'),
-    ('min_order_amount', '0.50'),
-    ('welcome_message', 'مرحباً بك في البوت!')
+    ('maintenance', 'false'), ('maintenance_msg', 'البوت تحت الصيانة'),
+    ('invite_reward', '0.10'), ('invite_enabled', 'true'),
+    ('force_subscribe', 'false'), ('bot_username', BOT_USERNAME),
+    ('daily_reward', '0.05'), ('channel_funding_enabled', 'true'),
+    ('min_funding_members', '100'), ('max_funding_members', '5000'),
+    ('subscription_reward', '0.01'), ('max_channels_per_user', '3'),
+    ('subscription_cooldown', '24'), ('welcome_message', 'مرحباً بك في البوت!')
 ]
 
 for key, value in default_settings:
@@ -101,10 +92,10 @@ def update_setting(key, value):
     c.execute("UPDATE settings SET value = ? WHERE key = ?", (value, key))
     conn.commit()
 
-def send_msg(chat_id, text, buttons=None, parse_mode='HTML'):
+def send_msg(chat_id, text, buttons=None):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = {'chat_id': chat_id, 'text': text, 'parse_mode': parse_mode}
+        data = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
         if buttons:
             data['reply_markup'] = json.dumps({'inline_keyboard': buttons})
         requests.post(url, json=data, timeout=10)
@@ -114,16 +105,12 @@ def send_msg(chat_id, text, buttons=None, parse_mode='HTML'):
 def check_channels(user_id):
     if get_setting('force_subscribe') != 'true':
         return True, None
-    
     c.execute("SELECT channel_id, channel_username FROM forced_channels")
-    channels = c.fetchall()
-    
-    for channel_id, channel_username in channels:
+    for channel_id, channel_username in c.fetchall():
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getChatMember"
             params = {'chat_id': channel_id, 'user_id': user_id}
             response = requests.get(url, params=params, timeout=5)
-            
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ok'):
@@ -132,7 +119,6 @@ def check_channels(user_id):
                         return False, channel_username
         except:
             continue
-    
     return True, None
 
 def generate_invoice_pdf(order_id, user_id, service_name, quantity, total_price, link):
@@ -170,6 +156,29 @@ def send_document(chat_id, document_path, caption=""):
     except:
         pass
 
+def admin_notification():
+    """إرسال إشعار للمدير كل 3 دقائق"""
+    while True:
+        try:
+            c.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'")
+            pending_orders = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM channel_funding WHERE status = 'pending'")
+            pending_funding = c.fetchone()[0]
+            
+            if pending_orders > 0 or pending_funding > 0:
+                text = f"📊 إشعار كل 3 دقائق\n📦 طلبات معلقة: {pending_orders}\n📺 تمويل معلق: {pending_funding}"
+                send_msg(ADMIN_ID, text)
+            
+            # إرسال للمشرفين أيضاً
+            c.execute("SELECT user_id FROM users WHERE is_admin = 1 AND user_id != ?", (ADMIN_ID,))
+            admins = c.fetchall()
+            for admin in admins:
+                send_msg(admin[0], f"📊 إشعار كل 3 دقائق\n📦 طلبات معلقة: {pending_orders}")
+            
+            time.sleep(180)  # 3 دقائق
+        except:
+            time.sleep(60)
+
 # ==================== القوائم الرئيسية ====================
 def main_menu(chat_id, user_id):
     subscribed, channel = check_channels(user_id)
@@ -197,47 +206,53 @@ def main_menu(chat_id, user_id):
 💰 الرصيد: <b>{user[1]:,.2f} USD</b>"""
     
     buttons = [
-        [{'text': '🛍️ خدمات', 'callback_data': 'services'}],
-        [{'text': '💰 شحن', 'callback_data': 'charge'}, {'text': '💳 رصيدي', 'callback_data': 'balance'}],
-        [{'text': '👥 دعوة', 'callback_data': 'invite'}, {'text': '📋 طلباتي', 'callback_data': 'my_orders'}]
+        [{'text': '🛍️ خدمات', 'callback_data': 'services'}, {'text': '💰 شحن', 'callback_data': 'charge'}],
+        [{'text': '💳 رصيدي', 'callback_data': 'balance'}, {'text': '👥 دعوة', 'callback_data': 'invite'}],
+        [{'text': '📋 طلباتي', 'callback_data': 'my_orders'}, {'text': '📞 دعم', 'callback_data': 'support'}]
     ]
     
     if daily_available:
         buttons.append([{'text': '🎁 هدية اليوم', 'callback_data': 'daily_reward'}])
     
-    buttons.append([{'text': '📺 تمويل قنوات', 'callback_data': 'channel_funding'}, 
-                    {'text': '📢 اشترك بقنوات', 'callback_data': 'subscribe_channels'}])
-    
-    buttons.append([{'text': '📞 دعم', 'callback_data': 'support'}])
+    buttons.append([{'text': '📺 تمويل قنوات', 'callback_data': 'channel_funding'}])
+    buttons.append([{'text': '📢 اشترك بقنوات', 'callback_data': 'subscribe_channels'}])
     
     if user[2] == 1 or user_id == ADMIN_ID:
         buttons.append([{'text': '👑 لوحة التحكم', 'callback_data': 'admin'}])
     
     send_msg(chat_id, text, buttons)
 
+def admin_panel(chat_id):
+    buttons = [
+        [{'text': '📊 إحصائيات', 'callback_data': 'stats'}, {'text': '👥 المستخدمين', 'callback_data': 'users_list'}],
+        [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن رصيد', 'callback_data': 'admin_charge'}],
+        [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_manage'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
+        [{'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}, {'text': '📺 إدارة التمويل', 'callback_data': 'funding_manage'}],
+        [{'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}, {'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}],
+        [{'text': '🔙 رئيسية', 'callback_data': 'main'}]
+    ]
+    send_msg(chat_id, "👑 لوحة التحكم", buttons)
+
 # ==================== نظام تمويل القنوات ====================
 def channel_funding_menu(chat_id, user_id):
-    enabled = get_setting('channel_funding_enabled')
-    if enabled != 'true':
+    if get_setting('channel_funding_enabled') != 'true':
         send_msg(chat_id, "⏸️ الخدمة معطلة")
         return
     
-    c.execute("SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM channel_funding WHERE user_id = ?", (user_id,))
+    c.execute("SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) FROM channel_funding WHERE user_id = ?", (user_id,))
     stats = c.fetchone() or (0, 0)
     
     reward = float(get_setting('subscription_reward'))
-    min_members = int(get_setting('min_funding_members'))
-    max_members = int(get_setting('max_funding_members'))
-    max_channels = int(get_setting('max_channels_per_user'))
+    min_m = int(get_setting('min_funding_members'))
+    max_m = int(get_setting('max_funding_members'))
+    max_c = int(get_setting('max_channels_per_user'))
     
     text = f"""📺 <b>تمويل القنوات</b>
 
 💰 مكافأة المشترك: {reward} USD
-🔢 الحدود: {min_members}-{max_members} عضو
+🔢 الحدود: {min_m}-{max_m} عضو
 📊 حملاتك: {stats[0]} (نشطة: {stats[1]})
-📈 الباقي: {max_channels - stats[1]} حملات
-
-📌 <b>اختر:</b>"""
+📈 الباقي: {max_c - stats[1]} حملات"""
     
     buttons = [
         [{'text': '➕ حملة جديدة', 'callback_data': 'new_funding'}],
@@ -250,8 +265,7 @@ def subscribe_channels_menu(chat_id, user_id):
     c.execute("""
         SELECT cf.id, cf.channel_username, cf.target_members, cf.current_members, cf.subscription_reward
         FROM channel_funding cf
-        WHERE cf.status = 'active' 
-        AND cf.current_members < cf.target_members
+        WHERE cf.status = 'active' AND cf.current_members < cf.target_members
         AND NOT EXISTS (SELECT 1 FROM channel_subscriptions cs WHERE cs.funding_id = cf.id AND cs.subscriber_id = ?)
         ORDER BY cf.current_members ASC LIMIT 10
     """, (user_id,))
@@ -275,29 +289,6 @@ def subscribe_channels_menu(chat_id, user_id):
         for fid, username, _, _, _ in channels:
             buttons.append([{'text': f'📺 @{username}', 'callback_data': f'subscribe_{fid}'}])
         buttons.append([{'text': '🔙 رجوع', 'callback_data': 'main'}])
-    
-    send_msg(chat_id, text, buttons)
-
-def my_fundings_menu(chat_id, user_id):
-    c.execute("SELECT id, channel_username, target_members, current_members, status, total_cost, created_at FROM channel_funding WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (user_id,))
-    fundings = c.fetchall()
-    
-    if not fundings:
-        text = "📭 لا توجد حملات تمويل"
-        buttons = [[{'text': '🔙 رجوع', 'callback_data': 'channel_funding'}]]
-    else:
-        text = "📋 <b>حملات التمويل الخاصة بك</b>\n\n"
-        for fid, username, target, current, status, cost, created in fundings:
-            status_icons = {'active': '🟢', 'completed': '✅', 'pending': '🟡', 'cancelled': '❌'}
-            icon = status_icons.get(status, '📌')
-            progress = (current / target) * 100 if target > 0 else 0
-            text += f"""{icon} <b>@{username}</b>
-👥 {current}/{target} ({progress:.1f}%)
-💰 {cost:.2f} USD
-📅 {created[:10]}
-━━━━━━━━━━
-"""
-        buttons = [[{'text': '🔙 رجوع', 'callback_data': 'channel_funding'}]]
     
     send_msg(chat_id, text, buttons)
 
@@ -327,7 +318,6 @@ def handle_message(chat_id, user_id, text, username=""):
             service_id = state['service_id']
             c.execute("SELECT name, price_per_k, min_order, max_order FROM services WHERE id = ?", (service_id,))
             serv = c.fetchone()
-            
             if serv:
                 name, price, min_q, max_q = serv
                 try:
@@ -335,7 +325,6 @@ def handle_message(chat_id, user_id, text, username=""):
                     if min_q <= quantity <= max_q:
                         total_price = (price / 1000) * quantity
                         balance = c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
-                        
                         if balance >= total_price:
                             user_states[user_id] = {'type': 'order_link', 'service_id': service_id, 'quantity': quantity, 'total': total_price}
                             send_msg(chat_id, f"✍️ أرسل الرابط لـ {name}:")
@@ -352,26 +341,20 @@ def handle_message(chat_id, user_id, text, username=""):
             service_id = state['service_id']
             quantity = state['quantity']
             total = state['total']
-            
             c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
             balance = c.fetchone()[0]
-            
             if balance >= total:
                 c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (total, user_id))
-                c.execute("INSERT INTO orders (user_id, service_id, quantity, total_price, link) VALUES (?, ?, ?, ?, ?)",
-                          (user_id, service_id, quantity, total, link))
+                c.execute("INSERT INTO orders (user_id, service_id, quantity, total_price, link) VALUES (?, ?, ?, ?, ?)", (user_id, service_id, quantity, total, link))
                 order_id = c.lastrowid
                 conn.commit()
-                
                 send_msg(chat_id, f"✅ تم إرسال الطلب #{order_id}\n💰 المبلغ: {total:,.2f} USD")
-                
                 c.execute("SELECT name FROM services WHERE id = ?", (service_id,))
                 service_name = c.fetchone()[0]
                 pdf_file = generate_invoice_pdf(order_id, user_id, service_name, quantity, total, link)
                 if pdf_file:
                     send_document(chat_id, pdf_file, f"📄 فاتورة الطلب #{order_id}")
                     os.remove(pdf_file)
-                
                 admin_text = f"""🆕 طلب جديد #{order_id}
 👤 {user_id}
 📦 {service_name}
@@ -380,7 +363,6 @@ def handle_message(chat_id, user_id, text, username=""):
                 send_msg(ADMIN_ID, admin_text, admin_buttons)
             else:
                 send_msg(chat_id, "❌ رصيد غير كافي")
-            
             del user_states[user_id]
         
         elif state['type'] == 'new_funding_channel':
@@ -395,25 +377,19 @@ def handle_message(chat_id, user_id, text, username=""):
                 target = int(text)
                 min_m = int(get_setting('min_funding_members'))
                 max_m = int(get_setting('max_funding_members'))
-                
                 if target < min_m or target > max_m:
                     send_msg(chat_id, f"❌ الحدود {min_m}-{max_m}")
                     del user_states[user_id]
                     return
-                
                 channel_link = state['channel_link']
                 reward = float(get_setting('subscription_reward'))
                 price_per_member = reward * 2
                 total_cost = target * price_per_member
-                
                 user_states[user_id] = {'type': 'confirm_funding', 'channel_link': channel_link, 'target': target, 'total_cost': total_cost, 'reward': reward}
-                
                 channel_username = ""
                 if 't.me/' in channel_link:
                     channel_username = channel_link.split('t.me/')[-1].replace('@', '')
-                
                 balance = c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
-                
                 text = f"""📺 <b>تأكيد الحملة</b>
 
 🔗 القناة: {channel_link}
@@ -423,10 +399,8 @@ def handle_message(chat_id, user_id, text, username=""):
 🎁 مكافأة المشترك: {reward} USD
 💳 رصيدك: {balance:.2f} USD
 💳 بعد الخصم: {balance - total_cost:.2f} USD"""
-                
                 buttons = [[{'text': '✅ تأكيد', 'callback_data': 'confirm_funding'}, {'text': '❌ إلغاء', 'callback_data': 'cancel_funding'}]]
                 send_msg(chat_id, text, buttons)
-                
             except:
                 send_msg(chat_id, "❌ أدخل رقم صحيح")
                 del user_states[user_id]
@@ -480,8 +454,7 @@ def handle_message(chat_id, user_id, text, username=""):
         elif state.get('type') == 'add_service_max':
             try:
                 max_order = int(text)
-                c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (?, ?, ?, ?, ?)",
-                          (state['cat_id'], state['name'], state['price'], state['min'], max_order))
+                c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (?, ?, ?, ?, ?)", (state['cat_id'], state['name'], state['price'], state['min'], max_order))
                 conn.commit()
                 send_msg(chat_id, f"✅ تم إضافة: {state['name']}")
                 del user_states[user_id]
@@ -553,7 +526,6 @@ def handle_message(chat_id, user_id, text, username=""):
                     try:
                         invite_code, inviter_id, _ = invite_data.split('_')
                         inviter_id = int(inviter_id)
-                        
                         if inviter_id != user_id and get_setting('invite_enabled') == 'true':
                             c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
                             inviter = c.fetchone()
@@ -687,13 +659,11 @@ def handle_callback(chat_id, user_id, data):
         if c.fetchone():
             send_msg(chat_id, "⚠️ أنت مشترك مسبقاً في هذه القناة")
             return
-        
         c.execute("SELECT channel_link, channel_username, subscription_reward FROM channel_funding WHERE id = ? AND status = 'active'", (funding_id,))
         channel = c.fetchone()
         if not channel:
             send_msg(chat_id, "❌ القناة غير متاحة")
             return
-        
         channel_link, username, reward = channel
         buttons = [
             [{'text': '📢 انضم للقناة', 'url': channel_link}],
@@ -709,7 +679,6 @@ def handle_callback(chat_id, user_id, data):
         if not channel:
             send_msg(chat_id, "❌ القناة غير موجودة")
             return
-        
         channel_id, username, reward = channel
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getChatMember"
@@ -751,7 +720,25 @@ def handle_callback(chat_id, user_id, data):
         send_msg(chat_id, "🔗 أرسل رابط قناتك:")
     
     elif data == 'my_fundings':
-        my_fundings_menu(chat_id, user_id)
+        c.execute("SELECT id, channel_username, target_members, current_members, status, total_cost, created_at FROM channel_funding WHERE user_id = ? ORDER BY created_at DESC LIMIT 10", (user_id,))
+        fundings = c.fetchall()
+        if not fundings:
+            text = "📭 لا توجد حملات تمويل"
+            buttons = [[{'text': '🔙 رجوع', 'callback_data': 'channel_funding'}]]
+        else:
+            text = "📋 <b>حملات التمويل الخاصة بك</b>\n\n"
+            for fid, username, target, current, status, cost, created in fundings:
+                status_icons = {'active': '🟢', 'completed': '✅', 'pending': '🟡', 'cancelled': '❌'}
+                icon = status_icons.get(status, '📌')
+                progress = (current / target) * 100 if target > 0 else 0
+                text += f"""{icon} <b>@{username}</b>
+👥 {current}/{target} ({progress:.1f}%)
+💰 {cost:.2f} USD
+📅 {created[:10]}
+━━━━━━━━━━
+"""
+            buttons = [[{'text': '🔙 رجوع', 'callback_data': 'channel_funding'}]]
+        send_msg(chat_id, text, buttons)
     
     elif data == 'confirm_funding':
         if user_id in user_states and user_states[user_id]['type'] == 'confirm_funding':
@@ -781,7 +768,10 @@ def handle_callback(chat_id, user_id, data):
                 del user_states[user_id]
                 return
             c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (total_cost, user_id))
-            c.execute("""INSERT INTO channel_funding (user_id, channel_link, channel_username, channel_id, target_members, price_per_member, total_cost, subscription_reward, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')""", (user_id, channel_link, channel_username, channel_id, target, reward * 2, total_cost, reward))
+            c.execute("""INSERT INTO channel_funding (user_id, channel_link, channel_username, channel_id, 
+                     target_members, price_per_member, total_cost, subscription_reward, status) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
+                     (user_id, channel_link, channel_username, channel_id, target, reward * 2, total_cost, reward))
             conn.commit()
             send_msg(chat_id, f"""✅ تم إنشاء الحملة
 📺 @{channel_username}
@@ -804,17 +794,6 @@ def handle_callback(chat_id, user_id, data):
             admin_panel(chat_id)
         else:
             send_msg(chat_id, "🚫 ليس لديك صلاحية")
-    
-    elif data == 'admin_panel':
-        buttons = [
-            [{'text': '📊 إحصائيات', 'callback_data': 'stats'}, {'text': '👥 المستخدمين', 'callback_data': 'users_list'}],
-            [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن رصيد', 'callback_data': 'admin_charge'}],
-            [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_manage'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
-            [{'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}, {'text': '📺 إدارة التمويل', 'callback_data': 'funding_manage'}],
-            [{'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}, {'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}],
-            [{'text': '🔙 رئيسية', 'callback_data': 'main'}]
-        ]
-        send_msg(chat_id, "👑 لوحة التحكم", buttons)
     
     elif data == 'stats':
         users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -1052,62 +1031,47 @@ def handle_callback(chat_id, user_id, data):
     else:
         send_msg(chat_id, "⚠️ أمر غير معروف")
 
-# ==================== دالة تشغيل البوت ====================
-def admin_panel(chat_id):
-    buttons = [
-        [{'text': '📊 إحصائيات', 'callback_data': 'stats'}, {'text': '👥 المستخدمين', 'callback_data': 'users_list'}],
-        [{'text': '🛍️ إدارة الخدمات', 'callback_data': 'manage_services'}, {'text': '💳 شحن رصيد', 'callback_data': 'admin_charge'}],
-        [{'text': '🚫 إدارة الحظر', 'callback_data': 'ban_manage'}, {'text': '👑 إدارة المشرفين', 'callback_data': 'admin_manage'}],
-        [{'text': '📢 القنوات الإجبارية', 'callback_data': 'channels_manage'}, {'text': '📺 إدارة التمويل', 'callback_data': 'funding_manage'}],
-        [{'text': '🎁 إرسال للجميع', 'callback_data': 'send_all'}, {'text': '⚙️ الإعدادات', 'callback_data': 'settings_menu'}],
-        [{'text': '🔙 رئيسية', 'callback_data': 'main'}]
-    ]
-    send_msg(chat_id, "👑 لوحة التحكم", buttons)
+# ==================== تشغيل البوت مع Flask ====================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 البوت يعمل بنجاح!"
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    update = request.json
+    if update:
+        if 'message' in update:
+            msg = update['message']
+            chat_id = msg['chat']['id']
+            user_id = msg['from']['id']
+            username = msg['from'].get('username', '')
+            if 'text' in msg:
+                text = msg['text']
+                handle_message(chat_id, user_id, text, username)
+        elif 'callback_query' in update:
+            query = update['callback_query']
+            chat_id = query['message']['chat']['id']
+            user_id = query['from']['id']
+            data = query['data']
+            try:
+                handle_callback(chat_id, user_id, data)
+            except:
+                pass
+    return 'OK'
 
 def run_bot():
     print("🚀 بدء تشغيل البوت...")
     print(f"👑 المدير: {ADMIN_ID}")
     print(f"🤖 البوت: @{BOT_USERNAME}")
     
-    offset = 0
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-            params = {'offset': offset, 'timeout': 30}
-            response = requests.get(url, params=params, timeout=35)
-            
-            if response.status_code == 200:
-                updates = response.json()
-                if updates.get('ok'):
-                    for update in updates['result']:
-                        offset = update['update_id'] + 1
-                        
-                        if 'message' in update:
-                            msg = update['message']
-                            chat_id = msg['chat']['id']
-                            user_id = msg['from']['id']
-                            username = msg['from'].get('username', '')
-                            
-                            if 'text' in msg:
-                                text = msg['text']
-                                handle_message(chat_id, user_id, text, username)
-                        
-                        elif 'callback_query' in update:
-                            query = update['callback_query']
-                            chat_id = query['message']['chat']['id']
-                            user_id = query['from']['id']
-                            data = query['data']
-                            
-                            try:
-                                handle_callback(chat_id, user_id, data)
-                            except Exception as e:
-                                print(f"⚠️ خطأ في الكال باك: {e}")
-            
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في البولينغ: {e}")
-            time.sleep(5)
+    # بدء إشعارات المدير
+    threading.Thread(target=admin_notification, daemon=True).start()
+    
+    # تشغيل Flask
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    run_bot() 
+    run_bot()
