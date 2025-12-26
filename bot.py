@@ -9,7 +9,6 @@ from datetime import datetime
 import os
 from fpdf import FPDF
 from flask import Flask, request
-import threading
 
 # ==================== إعدادات البوت ====================
 TOKEN = "8436742877:AAGhCfnC9hbW7Sa4gMTroYissoljCjda9Ow"
@@ -155,29 +154,6 @@ def send_document(chat_id, document_path, caption=""):
             requests.post(url, files=files, data=data, timeout=20)
     except:
         pass
-
-def admin_notification():
-    """إرسال إشعار للمدير كل 3 دقائق"""
-    while True:
-        try:
-            c.execute("SELECT COUNT(*) FROM orders WHERE status = 'pending'")
-            pending_orders = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM channel_funding WHERE status = 'pending'")
-            pending_funding = c.fetchone()[0]
-            
-            if pending_orders > 0 or pending_funding > 0:
-                text = f"📊 إشعار كل 3 دقائق\n📦 طلبات معلقة: {pending_orders}\n📺 تمويل معلق: {pending_funding}"
-                send_msg(ADMIN_ID, text)
-            
-            # إرسال للمشرفين أيضاً
-            c.execute("SELECT user_id FROM users WHERE is_admin = 1 AND user_id != ?", (ADMIN_ID,))
-            admins = c.fetchall()
-            for admin in admins:
-                send_msg(admin[0], f"📊 إشعار كل 3 دقائق\n📦 طلبات معلقة: {pending_orders}")
-            
-            time.sleep(180)  # 3 دقائق
-        except:
-            time.sleep(60)
 
 # ==================== القوائم الرئيسية ====================
 def main_menu(chat_id, user_id):
@@ -1031,12 +1007,12 @@ def handle_callback(chat_id, user_id, data):
     else:
         send_msg(chat_id, "⚠️ أمر غير معروف")
 
-# ==================== تشغيل البوت مع Flask ====================
+# ==================== تطبيق Flask ====================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 البوت يعمل بنجاح!"
+    return "🤖 البوت يعمل بنجاح على Render!"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
@@ -1061,17 +1037,6 @@ def webhook():
                 pass
     return 'OK'
 
-def run_bot():
-    print("🚀 بدء تشغيل البوت...")
-    print(f"👑 المدير: {ADMIN_ID}")
-    print(f"🤖 البوت: @{BOT_USERNAME}")
-    
-    # بدء إشعارات المدير
-    threading.Thread(target=admin_notification, daemon=True).start()
-    
-    # تشغيل Flask
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
 if __name__ == '__main__':
-    run_bot()
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
