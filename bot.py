@@ -930,7 +930,7 @@ def handle_callback(chat_id, user_id, data):
         user_states[user_id] = {'type': 'send_to_all_amount'}
         send_msg(chat_id, "💰 أرسل المبلغ للجميع:")
     
-    elif data == 'settings_menu':
+    elif data == 'settings_menu':menu':
         maint = get_setting('maintenance')
         invite_r = get_setting('invite_reward')
         daily_r = get_setting('daily_reward')
@@ -1061,4 +1061,9 @@ def webhook():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    # إخفاء جميع التحذيرات
+    import warnings
+    warnings.filterwarnings("ignore")
+    
+    # تشغيل بدون وضع التطوير
+    app.run(host='0.0.0.0', port=port, debug=False)
