@@ -12,37 +12,32 @@ BOT_USERNAME = "Flashback70bot"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== DATABASE INITIALIZATION ====================
+# ==================== DATABASE ====================
 def init_db():
     db_path = os.path.join(os.path.dirname(__file__), 'bot.db')
     conn = sqlite3.connect(db_path, check_same_thread=False)
     c = conn.cursor()
     
-    tables = [
-        """CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, 
-           balance REAL DEFAULT 0, is_admin INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0, 
-           is_restricted INTEGER DEFAULT 0, invite_code TEXT UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-           daily_reward_date TEXT DEFAULT '', total_invited INTEGER DEFAULT 0)""",
-        """CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)""",
-        """CREATE TABLE IF NOT EXISTS services (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER, 
-           name TEXT, price_per_k REAL, min_order INTEGER DEFAULT 100, max_order INTEGER DEFAULT 10000,
-           is_active INTEGER DEFAULT 1)""",
-        """CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
-           service_id INTEGER, quantity INTEGER, total_price REAL, link TEXT, status TEXT DEFAULT 'pending',
-           admin_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-        """CREATE TABLE IF NOT EXISTS forced_channels (id INTEGER PRIMARY KEY AUTOINCREMENT,
-           channel_id TEXT, channel_username TEXT, channel_url TEXT)""",
-        """CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)""",
-        """CREATE TABLE IF NOT EXISTS channel_funding (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-           channel_link TEXT, channel_username TEXT, channel_id TEXT, target_members INTEGER, 
-           current_members INTEGER DEFAULT 0, price_per_member REAL, total_cost REAL, 
-           subscription_reward REAL, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
-        """CREATE TABLE IF NOT EXISTS channel_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-           funding_id INTEGER, subscriber_id INTEGER, subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
-    ]
-    
-    for table in tables:
-        c.execute(table)
+    c.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, 
+               balance REAL DEFAULT 0, is_admin INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0, 
+               is_restricted INTEGER DEFAULT 0, invite_code TEXT UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+               daily_reward_date TEXT DEFAULT '', total_invited INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS services (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER, 
+               name TEXT, price_per_k REAL, min_order INTEGER DEFAULT 100, max_order INTEGER DEFAULT 10000,
+               is_active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
+               service_id INTEGER, quantity INTEGER, total_price REAL, link TEXT, status TEXT DEFAULT 'pending',
+               admin_note TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS forced_channels (id INTEGER PRIMARY KEY AUTOINCREMENT,
+               channel_id TEXT, channel_username TEXT, channel_url TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS channel_funding (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+               channel_link TEXT, channel_username TEXT, channel_id TEXT, target_members INTEGER, 
+               current_members INTEGER DEFAULT 0, price_per_member REAL, total_cost REAL, 
+               subscription_reward REAL, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS channel_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+               funding_id INTEGER, subscriber_id INTEGER, subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
     default_settings = [
         ('maintenance', 'false'), ('invite_reward', '0.10'), ('invite_enabled', 'true'),
@@ -84,8 +79,8 @@ def send_msg(chat_id, text, buttons=None):
         if buttons:
             data['reply_markup'] = json.dumps({'inline_keyboard': buttons})
         requests.post(url, json=data, timeout=10)
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
 
 def check_channels(user_id):
     if get_setting('force_subscribe') != 'true':
@@ -105,12 +100,12 @@ def check_channels(user_id):
             continue
     return True, None
 
-def generate_invoice_pdf(order_id, user_id, service_name, quantity, total_price, link, is_funding=False):
+def generate_invoice_pdf(order_id, user_id, service_name, quantity, total_price, link):
     try:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font('Arial', 'B', 16)
-        pdf.cell(200, 10, 'CHANNEL FUNDING INVOICE' if is_funding else 'FLASHBOT INVOICE', 0, 1, 'C')
+        pdf.cell(200, 10, 'FLASHBOT INVOICE', 0, 1, 'C')
         pdf.ln(5)
         pdf.set_font('Arial', '', 12)
         pdf.cell(50, 10, f'Invoice ID: #{order_id}', 0, 1)
@@ -118,28 +113,21 @@ def generate_invoice_pdf(order_id, user_id, service_name, quantity, total_price,
         pdf.cell(50, 10, f'User ID: {user_id}', 0, 1)
         pdf.ln(5)
         pdf.set_font('Arial', 'B', 14)
-        pdf.cell(200, 10, 'Funding Details' if is_funding else 'Order Details', 0, 1, 'C')
+        pdf.cell(200, 10, 'Order Details', 0, 1, 'C')
         pdf.set_font('Arial', '', 12)
-        if is_funding:
-            pdf.cell(100, 10, f'• Channel: {service_name}', 0, 1)
-            pdf.cell(100, 10, f'• Members: {quantity}', 0, 1)
-            pdf.cell(100, 10, f'• Total: ${total_price:.2f} USD', 0, 1)
-            pdf.ln(10)
-            pdf.set_font('Arial', 'I', 12)
-            pdf.cell(200, 10, "We'll grow your channel!", 0, 1, 'C')
-        else:
-            pdf.cell(100, 10, f'• Service: {service_name}', 0, 1)
-            pdf.cell(100, 10, f'• Quantity: {quantity}', 0, 1)
-            pdf.cell(100, 10, f'• Link: {link}', 0, 1)
-            pdf.cell(100, 10, f'• Total: ${total_price:.2f} USD', 0, 1)
-            pdf.ln(10)
-            pdf.set_font('Arial', 'I', 12)
-            pdf.cell(200, 10, random.choice(["شكراً لثقتك بنا!", "نقدر عملك معنا.", "Thank you for ordering!"]), 0, 1, 'C')
+        pdf.cell(100, 10, f'• Service: {service_name}', 0, 1)
+        pdf.cell(100, 10, f'• Quantity: {quantity}', 0, 1)
+        pdf.cell(100, 10, f'• Link: {link}', 0, 1)
+        pdf.cell(100, 10, f'• Total: ${total_price:.2f} USD', 0, 1)
+        pdf.ln(10)
+        pdf.set_font('Arial', 'I', 12)
+        pdf.cell(200, 10, random.choice(["شكراً لثقتك بنا!", "نقدر عملك معنا.", "Thank you for ordering!"]), 0, 1, 'C')
         
-        filename = f"{'funding' if is_funding else 'invoice'}_{order_id}.pdf"
+        filename = f"invoice_{order_id}.pdf"
         pdf.output(filename)
         return filename
-    except:
+    except Exception as e:
+        logger.error(f"PDF Error: {e}")
         return None
 
 def send_document(chat_id, document_path, caption=""):
@@ -149,10 +137,10 @@ def send_document(chat_id, document_path, caption=""):
             files = {'document': doc}
             data = {'chat_id': chat_id, 'caption': caption}
             requests.post(url, files=files, data=data, timeout=20)
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Document Error: {e}")
 
-# ==================== MAIN MENUS ====================
+# ==================== MENUS ====================
 def main_menu(chat_id, user_id):
     subscribed, channel = check_channels(user_id)
     if not subscribed:
@@ -237,9 +225,44 @@ def handle_message(chat_id, user_id, text, username=""):
         return
     
     if text == '/start':
-        handle_start_command(chat_id, user_id, text, username)
-    elif text == '/admin' and (user_id == ADMIN_ID or (c.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,)).fetchone() and c.fetchone()[0] == 1)):
-        admin_panel(chat_id)
+        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        if not c.fetchone():
+            invite_code = str(uuid.uuid4())[:8]
+            c.execute("INSERT INTO users (user_id, username, invite_code) VALUES (?, ?, ?)", (user_id, username, invite_code))
+            conn.commit()
+        
+        if ' ' in text:
+            parts = text.split()
+            if len(parts) > 1:
+                invite_data = parts[1]
+                if '_' in invite_data:
+                    try:
+                        invite_code, inviter_id, _ = invite_data.split('_')
+                        inviter_id = int(inviter_id)
+                        if inviter_id != user_id and get_setting('invite_enabled') == 'true':
+                            c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
+                            inviter = c.fetchone()
+                            if inviter and inviter[0] == inviter_id:
+                                reward = float(get_setting('invite_reward'))
+                                c.execute("UPDATE users SET balance = balance + ?, total_invited = total_invited + 1 WHERE user_id = ?", (reward, inviter_id))
+                                conn.commit()
+                                send_msg(inviter_id, f"🎉 مكافأة دعوة {reward} USD")
+                    except:
+                        pass
+        
+        main_menu(chat_id, user_id)
+    
+    elif text == '/admin':
+        if user_id == ADMIN_ID:
+            admin_panel(chat_id)
+        else:
+            c.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            if result and result[0] == 1:
+                admin_panel(chat_id)
+            else:
+                send_msg(chat_id, "🚫 ليس لديك صلاحية")
+    
     else:
         main_menu(chat_id, user_id)
 
@@ -289,7 +312,10 @@ def handle_user_state(chat_id, user_id, text, state):
             pdf_file = generate_invoice_pdf(order_id, user_id, service_name, quantity, total, link)
             if pdf_file:
                 send_document(chat_id, pdf_file, f"📄 فاتورة الطلب #{order_id}")
-                os.remove(pdf_file)
+                try:
+                    os.remove(pdf_file)
+                except:
+                    pass
             
             admin_text = f"""🆕 طلب جديد #{order_id}
 👤 {user_id}
@@ -331,6 +357,44 @@ def handle_user_state(chat_id, user_id, text, state):
             send_msg(chat_id, "❌ أدخل رقم صحيح")
             del user_states[user_id]
     
+    elif state_type == 'add_service_name':
+        if text:
+            user_states[user_id] = {'type': 'add_service_price', 'cat_id': state['cat_id'], 'name': text}
+            send_msg(chat_id, "💰 أرسل السعر لكل 1000:")
+        else:
+            send_msg(chat_id, "❌ الاسم فارغ")
+            del user_states[user_id]
+    
+    elif state_type == 'add_service_price':
+        try:
+            price = float(text)
+            user_states[user_id] = {'type': 'add_service_min', 'cat_id': state['cat_id'], 'name': state['name'], 'price': price}
+            send_msg(chat_id, "🔢 أرسل الحد الأدنى:")
+        except:
+            send_msg(chat_id, "❌ سعر غير صحيح")
+            del user_states[user_id]
+    
+    elif state_type == 'add_service_min':
+        try:
+            min_order = int(text)
+            user_states[user_id] = {'type': 'add_service_max', 'cat_id': state['cat_id'], 'name': state['name'], 'price': state['price'], 'min': min_order}
+            send_msg(chat_id, "🔢 أرسل الحد الأقصى:")
+        except:
+            send_msg(chat_id, "❌ رقم غير صحيح")
+            del user_states[user_id]
+    
+    elif state_type == 'add_service_max':
+        try:
+            max_order = int(text)
+            c.execute("INSERT INTO services (category_id, name, price_per_k, min_order, max_order) VALUES (?, ?, ?, ?, ?)", 
+                     (state['cat_id'], state['name'], state['price'], state['min'], max_order))
+            conn.commit()
+            send_msg(chat_id, f"✅ تم إضافة: {state['name']}")
+            del user_states[user_id]
+        except:
+            send_msg(chat_id, "❌ رقم غير صحيح")
+            del user_states[user_id]
+    
     elif state_type == 'reject_reason':
         order_id = state['order_id']
         reason = text
@@ -342,13 +406,6 @@ def handle_user_state(chat_id, user_id, text, state):
             send_msg(order[0], f"❌ تم رفض طلبك #{order_id}")
         conn.commit()
         send_msg(chat_id, f"✅ تم رفض الطلب #{order_id}")
-        del user_states[user_id]
-    
-    elif state_type == 'add_category':
-        if text:
-            c.execute("INSERT INTO categories (name) VALUES (?)", (text,))
-            conn.commit()
-            send_msg(chat_id, f"✅ تم إضافة قسم: {text}")
         del user_states[user_id]
     
     elif state_type == 'admin_charge_user':
@@ -399,37 +456,66 @@ def handle_user_state(chat_id, user_id, text, state):
         send_msg(chat_id, f"✅ تم الإرسال لـ {count} مستخدم")
         del user_states[user_id]
     
+    elif state_type == 'add_channel_id':
+        channel_id = text.strip()
+        user_states[user_id] = {'type': 'add_channel_username', 'channel_id': channel_id}
+        send_msg(chat_id, "👤 أرسل يوزر القناة (بدون @):")
+    
+    elif state_type == 'add_channel_username':
+        channel_username = text.strip().replace('@', '')
+        user_states[user_id] = {'type': 'add_channel_url', 'channel_id': state['channel_id'], 'channel_username': channel_username}
+        send_msg(chat_id, "🔗 أرسل رابط القناة:")
+    
+    elif state_type == 'add_channel_url':
+        channel_url = text.strip()
+        channel_id = state['channel_id']
+        channel_username = state['channel_username']
+        c.execute("INSERT INTO forced_channels (channel_id, channel_username, channel_url) VALUES (?, ?, ?)",
+                 (channel_id, channel_username, channel_url))
+        conn.commit()
+        send_msg(chat_id, f"✅ تم إضافة القناة: @{channel_username}")
+        del user_states[user_id]
+    
+    elif state_type == 'view_user':
+        if text.isdigit():
+            target_id = int(text)
+            c.execute("SELECT username, balance, is_admin, is_banned, is_restricted, total_invited, created_at, invite_code FROM users WHERE user_id = ?", (target_id,))
+            user_data = c.fetchone()
+            if user_data:
+                username, balance, is_admin, is_banned, is_restricted, total_invited, created_at, invite_code = user_data
+                
+                text_info = f"""👤 <b>معلومات المستخدم</b>
+
+🆔 الآيدي: <code>{target_id}</code>
+👤 اليوزر: @{username if username else 'بدون'}
+💰 الرصيد: {balance:.2f} USD
+👥 الدعوات: {total_invited}
+📅 التسجيل: {created_at[:10]}
+🔑 كود الدعوة: {invite_code}
+
+📊 الحالة:
+• 👑 مشرف: {'✅' if is_admin == 1 else '❌'}
+• 🚫 محظور: {'✅' if is_banned == 1 else '❌'}
+• ⚠️ مقيد: {'✅' if is_restricted == 1 else '❌'}"""
+                
+                buttons = [
+                    [{'text': '🚫 حظر', 'callback_data': f'ban_{target_id}'}, {'text': '✅ فك حظر', 'callback_data': f'unban_{target_id}'}],
+                    [{'text': '⚠️ تقييد', 'callback_data': f'restrict_{target_id}'}, {'text': '🔓 فك تقييد', 'callback_data': f'unrestrict_{target_id}'}],
+                    [{'text': '👑 رفع مشرف', 'callback_data': f'promote_{target_id}'}, {'text': '👤 خفض مشرف', 'callback_data': f'demote_{target_id}'}],
+                    [{'text': '💳 شحن رصيد', 'callback_data': f'chargeuser_{target_id}'}],
+                    [{'text': '🔙 رجوع', 'callback_data': 'admin_panel'}]
+                ]
+                
+                send_msg(chat_id, text_info, buttons)
+            else:
+                send_msg(chat_id, "❌ المستخدم غير موجود")
+        else:
+            send_msg(chat_id, "❌ آيدي غير صحيح")
+        del user_states[user_id]
+    
     else:
         send_msg(chat_id, "⚠️ حالة غير معروفة")
         del user_states[user_id]
-
-def handle_start_command(chat_id, user_id, text, username=""):
-    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    if not c.fetchone():
-        invite_code = str(uuid.uuid4())[:8]
-        c.execute("INSERT INTO users (user_id, username, invite_code) VALUES (?, ?, ?)", (user_id, username, invite_code))
-        conn.commit()
-    
-    if ' ' in text:
-        parts = text.split()
-        if len(parts) > 1:
-            invite_data = parts[1]
-            if '_' in invite_data:
-                try:
-                    invite_code, inviter_id, _ = invite_data.split('_')
-                    inviter_id = int(inviter_id)
-                    if inviter_id != user_id and get_setting('invite_enabled') == 'true':
-                        c.execute("SELECT user_id FROM users WHERE invite_code = ?", (invite_code,))
-                        inviter = c.fetchone()
-                        if inviter and inviter[0] == inviter_id:
-                            reward = float(get_setting('invite_reward'))
-                            c.execute("UPDATE users SET balance = balance + ?, total_invited = total_invited + 1 WHERE user_id = ?", (reward, inviter_id))
-                            conn.commit()
-                            send_msg(inviter_id, f"🎉 مكافأة دعوة {reward} USD")
-                except:
-                    pass
-    
-    main_menu(chat_id, user_id)
 
 # ==================== CALLBACK HANDLING ====================
 def handle_callback(chat_id, user_id, data):
@@ -578,18 +664,18 @@ def handle_callback(chat_id, user_id, data):
         if c.fetchone():
             send_msg(chat_id, "⚠️ أنت مشترك مسبقاً")
             return
-        c.execute("SELECT channel_link, channel_username, subscription_reward FROM channel_funding WHERE id = ? AND status = 'active'", (funding_id,))
+        c.execute("SELECT channel_link, channel_username, subscription_reward, channel_id FROM channel_funding WHERE id = ? AND status = 'active'", (funding_id,))
         channel = c.fetchone()
         if not channel:
             send_msg(chat_id, "❌ القناة غير متاحة")
             return
-        channel_link, username, reward = channel
+        channel_link, username, reward, channel_id = channel
         buttons = [
             [{'text': '📢 انضم للقناة', 'url': channel_link}],
             [{'text': '✅ تحقق', 'callback_data': f'verify_sub_{funding_id}'}],
             [{'text': '🔙 رجوع', 'callback_data': 'subscribe_channels'}]
         ]
-        send_msg(chat_id, f"📺 @{username}\n💰 المكافأة: {reward} USD", buttons)
+        send_msg(chat_id, f"📺 @{username}\n💰 المكافأة: {reward} USD\n\nانضم للقناة ثم اضغط تحقق", buttons)
     
     elif data.startswith('verify_sub_'):
         funding_id = int(data.split('_')[2])
@@ -617,11 +703,12 @@ def handle_callback(chat_id, user_id, data):
                             c.execute("UPDATE channel_funding SET status = 'completed' WHERE id = ?", (funding_id,))
                             send_msg(owner_id, f"✅ اكتملت حملة @{username}")
                         conn.commit()
-                        send_msg(chat_id, f"✅ تم الاشتراك\n💰 حصلت على {reward} USD")
+                        send_msg(chat_id, f"✅ تم الاشتراك في @{username}\n💰 حصلت على {reward} USD")
                     else:
                         send_msg(chat_id, f"❌ لم تنضم بعد إلى @{username}")
-        except:
-            send_msg(chat_id, "❌ حدث خطأ")
+        except Exception as e:
+            logger.error(f"Subscription error: {e}")
+            send_msg(chat_id, "❌ حدث خطأ في التحقق")
     
     elif data == 'new_funding':
         c.execute("SELECT COUNT(*) FROM channel_funding WHERE user_id = ? AND status = 'active'", (user_id,))
@@ -668,18 +755,29 @@ def handle_callback(chat_id, user_id, data):
                 del user_states[user_id]
                 return
             
+            channel_id = ""
+            try:
+                if channel_username:
+                    url = f"https://api.telegram.org/bot{TOKEN}/getChat"
+                    params = {'chat_id': f'@{channel_username}'}
+                    response = requests.get(url, params=params, timeout=5)
+                    if response.status_code == 200:
+                        data_resp = response.json()
+                        if data_resp.get('ok'):
+                            channel_id = str(data_resp['result']['id'])
+            except:
+                pass
+            
             c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (total_cost, user_id))
-            c.execute("""INSERT INTO channel_funding (user_id, channel_link, channel_username, target_members, 
-                     total_cost, subscription_reward, status) VALUES (?, ?, ?, ?, ?, ?, 'active')""",
-                     (user_id, channel_link, channel_username, target, total_cost, reward))
+            c.execute("""INSERT INTO channel_funding (user_id, channel_link, channel_username, channel_id, 
+                     target_members, price_per_member, total_cost, subscription_reward, status) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')""",
+                     (user_id, channel_link, channel_username, channel_id, target, reward * 2, total_cost, reward))
             conn.commit()
-            
-            pdf_file = generate_invoice_pdf(c.lastrowid, user_id, channel_username, target, total_cost, "", True)
-            if pdf_file:
-                send_document(chat_id, pdf_file, "📄 فاتورة التمويل")
-                os.remove(pdf_file)
-            
-            send_msg(chat_id, f"✅ تم إنشاء الحملة")
+            send_msg(chat_id, f"""✅ تم إنشاء الحملة
+📺 @{channel_username}
+👥 الهدف: {target} عضو
+💰 التكلفة: {total_cost:.2f} USD""")
             del user_states[user_id]
     
     elif data == 'cancel_funding':
@@ -711,6 +809,33 @@ def handle_callback(chat_id, user_id, data):
 📺 حملات التمويل: {funding}"""
         send_msg(chat_id, text)
     
+    elif data == 'funding_manage':
+        c.execute("SELECT COUNT(*) FROM channel_funding WHERE status = 'active'")
+        active = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM channel_funding WHERE status = 'pending'")
+        pending = c.fetchone()[0]
+        text = f"""📺 إدارة التمويل
+🟢 نشطة: {active}
+🟡 معلقة: {pending}"""
+        buttons = [
+            [{'text': '📋 جميع الحملات', 'callback_data': 'view_all_funding_admin'}],
+            [{'text': '🔙 رجوع', 'callback_data': 'admin_panel'}]
+        ]
+        send_msg(chat_id, text, buttons)
+    
+    elif data == 'view_all_funding_admin':
+        c.execute("SELECT cf.id, u.username, cf.channel_username, cf.target_members, cf.current_members, cf.status, cf.created_at FROM channel_funding cf LEFT JOIN users u ON cf.user_id = u.user_id ORDER BY cf.created_at DESC LIMIT 15")
+        all_funding = c.fetchall()
+        if not all_funding:
+            text = "📭 لا توجد حملات"
+        else:
+            text = "📊 جميع الحملات\n\n"
+            for fid, owner, channel, target, current, status, created in all_funding:
+                status_icons = {'active': '🟢', 'completed': '✅', 'pending': '🟡'}
+                icon = status_icons.get(status, '📌')
+                text += f"{icon} #{fid} - @{channel}\n👤 {owner or 'بدون'}\n👥 {current}/{target}\n📅 {created[:10]}\n"
+        send_msg(chat_id, text)
+    
     elif data == 'users_list':
         user_states[user_id] = {'type': 'view_user'}
         send_msg(chat_id, "🔍 أرسل آيدي المستخدم:")
@@ -718,6 +843,7 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'manage_services':
         buttons = [
             [{'text': '📁 إضافة قسم', 'callback_data': 'add_category'}],
+            [{'text': '➕ إضافة خدمة', 'callback_data': 'add_service'}],
             [{'text': '🔙 رجوع', 'callback_data': 'admin_panel'}]
         ]
         send_msg(chat_id, "🛍️ إدارة الخدمات", buttons)
@@ -725,6 +851,23 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'add_category':
         user_states[user_id] = {'type': 'add_category'}
         send_msg(chat_id, "➕ أرسل اسم القسم:")
+    
+    elif data == 'add_service':
+        c.execute("SELECT id, name FROM categories")
+        cats = c.fetchall()
+        if not cats:
+            send_msg(chat_id, "❌ لا توجد أقسام")
+            return
+        buttons = []
+        for cat_id, name in cats:
+            buttons.append([{'text': name, 'callback_data': f'addserv_{cat_id}'}])
+        buttons.append([{'text': '🔙 رجوع', 'callback_data': 'manage_services'}])
+        send_msg(chat_id, "📁 اختر قسم:", buttons)
+    
+    elif data.startswith('addserv_'):
+        cat_id = data.split('_')[1]
+        user_states[user_id] = {'type': 'add_service_name', 'cat_id': cat_id}
+        send_msg(chat_id, "➕ أرسل اسم الخدمة:")
     
     elif data == 'admin_charge':
         user_states[user_id] = {'type': 'admin_charge_user'}
@@ -745,6 +888,22 @@ def handle_callback(chat_id, user_id, data):
     elif data == 'unban_user':
         user_states[user_id] = {'type': 'unban_user'}
         send_msg(chat_id, "✅ أرسل آيدي المستخدم لفك الحظر:")
+    
+    elif data == 'admin_manage':
+        buttons = [
+            [{'text': '👑 رفع مشرف', 'callback_data': 'promote_admin'}],
+            [{'text': '👤 خفض مشرف', 'callback_data': 'demote_admin'}],
+            [{'text': '🔙 رجوع', 'callback_data': 'admin_panel'}]
+        ]
+        send_msg(chat_id, "👑 إدارة المشرفين", buttons)
+    
+    elif data == 'promote_admin':
+        user_states[user_id] = {'type': 'promote_admin'}
+        send_msg(chat_id, "👑 أرسل آيدي المستخدم للرفع:")
+    
+    elif data == 'demote_admin':
+        user_states[user_id] = {'type': 'demote_admin'}
+        send_msg(chat_id, "👤 أرسل آيدي المشرف للخفض:")
     
     elif data == 'channels_manage':
         buttons = [
@@ -805,6 +964,68 @@ def handle_callback(chat_id, user_id, data):
         user_states[user_id] = {'type': 'reject_reason', 'order_id': order_id}
         send_msg(chat_id, f"📝 أرسل سبب رفض الطلب #{order_id}:")
     
+    elif data.startswith('ban_'):
+        target_id = int(data.split('_')[1])
+        if target_id == ADMIN_ID:
+            send_msg(chat_id, "❌ لا يمكن حظر المدير")
+        else:
+            c.execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            send_msg(chat_id, f"✅ تم حظر المستخدم {target_id}")
+            send_msg(target_id, "🚫 تم حظرك")
+    
+    elif data.startswith('unban_'):
+        target_id = int(data.split('_')[1])
+        c.execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        send_msg(chat_id, f"✅ تم فك حظر المستخدم {target_id}")
+        send_msg(target_id, "✅ تم فك حظرك")
+    
+    elif data.startswith('restrict_'):
+        target_id = int(data.split('_')[1])
+        if target_id == ADMIN_ID:
+            send_msg(chat_id, "❌ لا يمكن تقييد المدير")
+        else:
+            c.execute("UPDATE users SET is_restricted = 1 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            send_msg(chat_id, f"✅ تم تقييد المستخدم {target_id}")
+            send_msg(target_id, "⚠️ تم تقييد حسابك")
+    
+    elif data.startswith('unrestrict_'):
+        target_id = int(data.split('_')[1])
+        c.execute("UPDATE users SET is_restricted = 0 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        send_msg(chat_id, f"✅ تم فك تقييد المستخدم {target_id}")
+        send_msg(target_id, "✅ تم فك تقييد حسابك")
+    
+    elif data.startswith('promote_'):
+        target_id = int(data.split('_')[1])
+        if target_id == ADMIN_ID:
+            send_msg(chat_id, "❌ هذا المستخدم هو المدير")
+        else:
+            c.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            send_msg(chat_id, f"✅ تم رفع المستخدم {target_id}")
+            send_msg(target_id, "👑 تمت ترقيتك إلى مشرف")
+    
+    elif data.startswith('demote_'):
+        target_id = int(data.split('_')[1])
+        if target_id == ADMIN_ID:
+            send_msg(chat_id, "❌ لا يمكن خفض المدير")
+        else:
+            c.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            send_msg(chat_id, f"✅ تم خفض المشرف {target_id}")
+            send_msg(target_id, "👤 تم خفض صلاحياتك")
+    
+    elif data.startswith('chargeuser_'):
+        target_id = int(data.split('_')[1])
+        user_states[user_id] = {'type': 'admin_charge_amount', 'target_id': target_id}
+        send_msg(chat_id, f"💰 أرسل المبلغ للشحن للمستخدم {target_id}:")
+    
+    elif data == 'admin_panel':
+        admin_panel(chat_id)
+    
     else:
         send_msg(chat_id, "⚠️ أمر غير معروف")
 
@@ -834,8 +1055,8 @@ def webhook():
             data = query['data']
             try:
                 handle_callback(chat_id, user_id, data)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Callback error: {e}")
     return 'OK'
 
 if __name__ == '__main__':
